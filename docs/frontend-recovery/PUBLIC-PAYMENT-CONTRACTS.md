@@ -18,15 +18,15 @@ interface CheckoutCounterResponse {
   network: string;             // status=4 时为空
   status: OrderStatus;
   payment_type: string;        // 后端输出小写 gmpay/epay
-  expiration_time: number;     // Unix seconds
+  expiration_time: number;     // Unix MILLISECONDS (TimestampMilli)
   redirect_url: string;        // EPay 可能是内部 /pay/return/:trade_id
   payment_url: string;         // 链上为空，OkPay 为 hosted payLink
-  created_at: number;          // Unix seconds
-  server_time: number;         // Unix seconds
+  created_at: number;          // Unix MILLISECONDS
+  server_time: number;         // Unix MILLISECONDS
   is_selected: boolean;
 }
 ```
-当前收银台 JS `checkout-model-CU56hvYm.js` 会格式化 network/token/currency、将数值或字符串时间解析为 Date，保留服务端时钟并使用 `performance.now()` 估算倒计时；不要把 Unix seconds 当 JS milliseconds。
+当前收银台 JS `checkout-model-CU56hvYm.js` 会格式化 network/token/currency、将数值或字符串时间解析为 Date，保留服务端时钟并使用 `performance.now()` 估算倒计时；注意：checkout-counter-resp 三个时间字段均为 Unix 毫秒，create-transaction 的 expiration_time 为 Unix 秒；不能混用。
 
 ## 3. GET /pay/check-status/{trade_id}
 `response.CheckStatusResponse`：`{trade_id:string,status:1|2|3|4}`。旧前端在 status=2 时 success、status=3 时 expired，每 5000ms 轮询。并发切换后必须防止旧 trade_id 响应影响新订单。
@@ -89,7 +89,8 @@ interface CreateTransactionRequest {
 interface CreateTransactionResponse {
   trade_id:string; order_id:string; amount:number; currency:string;
   actual_amount:number; receive_address:string; token:string;
-  status:OrderStatus; expiration_time:number; payment_url:string;
+  status:OrderStatus; expiration_time:number; // Unix SECONDS (Timestamp())
+  payment_url:string;
 }
 ```
 - GMPay `POST /payments/gmpay/v1/order/create-transaction` 使用签名 middleware；缺省 token/network 时可生成 status=4 占位单；只传其中一项不合法（route/service 约定）。
@@ -101,5 +102,9 @@ interface CreateTransactionResponse {
 1. status=4 初始占位单，选择 on-chain / OkPay 后原地补全；status=1 切链形成子订单，验证 trade_id 改变与返回地址。
 2. 过期、重复 switch、支付回调并发与子订单二次切换。
 3. 公网 config 无 ShopToken，带管理员身份的 config 允许管理详情，敏感结果不可被缓存/日志泄露。
-4. Unix seconds 的倒计时、5 秒轮询、连续异常、支付成功后 3 秒跳转。
+4. 分开验证两种时间单位（checkout 毫秒、create 秒）、5 秒轮询、连续异常和成功后 3 秒跳转。
 5. EPay 302 响应、/pay/return 回跳签名与来源校验；不能把返回路径当成收银台原始 redirect_url。
+
+## 第五轮时间戳纠正（服务端赋值比注释更可信）
+
+Go src/model/service/order_service.go 的 buildCheckoutResponse 实际使用 TimestampMilli() 构造 expiration_time / created_at / server_time；buildCreateTransactionResponse 则使用 Timestamp() 构造 expiration_time。src/model/response/pay_response.go 的说明存在与实现不一致的秒级描述，恢复时应以最终 JSON 赋值为准。原版 checkout-model 使用数量级阈值兼容解析秒和毫秒。

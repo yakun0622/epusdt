@@ -74,7 +74,7 @@ interface CheckoutOrder {
 ## 倒计时
 
 - 前端以 `server_time` 为时间基准，同时保存 `performance.now()`；浏览器每秒更新逻辑展示用服务端时间加单调时间差的估算，避免简单依赖本地系统时钟。
-- 截止时间取 `expiration_time`，跨数值/字符串时间戳进行兼容解析；如果 `expiration_time` 存在而 `server_time` 缺失，前端会进入异常路径。
+- 截止时间取 `expiration_time`，跨数值/字符串时间戳进行兼容解析；Go buildCheckoutResponse 实际返回 Unix 毫秒，如果 `expiration_time` 存在而 `server_time` 缺失，前端会进入异常路径。
 - 创建与过期时间能够形成有效间隔时采用该间隔，缺失时出现 600 秒作为显示比率的回退值（**不是服务端默认订单 TTL**）。
 
 ## 网络和特殊支付方式
@@ -93,3 +93,7 @@ interface CheckoutOrder {
 4. 多次选择网络和多标签并发，旧响应覆盖新交易号的可能性。
 5. 提交重复 tx hash、反复点击、重复回调、成功跳转取消及 3 秒延时。
 6. 只有测试钱包和测试订单才允许执行端到端支付；不能用真实付款做逆向验证。
+
+## 第五轮错误处理纠偏
+
+原版将 10010 映射到 expired，但 Go errno 中 10010=OrderStatusConflict，不能直接推断过期。新实现建议重新 GET /pay/check-status/{trade_id} 决定成功、过期或其他状态；这是有意修正原版问题。

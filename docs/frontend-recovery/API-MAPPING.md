@@ -9,7 +9,7 @@ JS 调用依据：`src/www/assets/<对应模块>` 中 `useQuery(method,path)`、
 | 登录 `sign-in` | POST /auth/login；GET /auth/me；GET /auth/init-password-hash | POST /auth/logout、POST /auth/password（密码模块单独使用） |
 | 密码 `password` | POST /auth/password | — |
 | 仪表盘 `dashboard` | GET /dashboard/overview、/asset-trend、/revenue-trend、/order-stats、/rpc-stats、/recent-orders | — |
-| 订单 `orders` | GET /orders；GET /orders/{trade_id}；POST /orders/{trade_id}/close、/mark-paid、/resend-callback | GET /orders/export、/orders/list-with-sub、/orders/{trade_id}/with-sub（JS 是否调用未确证） |
+| 订单 `orders` | GET /orders；GET /orders/{trade_id}；POST /orders/{trade_id}/close、/mark-paid、/resend-callback；GET /orders/export（原生 fetch 已确证） | GET /orders/list-with-sub、/orders/{trade_id}/with-sub（JS 是否调用未确证） |
 | 钱包 `addresses` | GET /wallets；POST /wallets；PATCH /wallets/{id}；DELETE /wallets/{id}；POST /wallets/{id}/status、/wallets/batch-import | GET /wallets/{id}（JS 未确证） |
 | API Key `keys` | GET /api-keys；POST /api-keys；PATCH /api-keys/{id}；DELETE /api-keys/{id}；POST /api-keys/{id}/status、/rotate-secret；GET /api-keys/{id}/secret、/stats | — |
 | 链 `chains` + `chains-store` | GET /chains；PATCH /chains/{network}；GET /chain-tokens；POST /chain-tokens；PATCH /chain-tokens/{id}；POST /chain-tokens/{id}/status | DELETE /chain-tokens/{id}（后端存在，JS 是否接入未确证） |
@@ -43,3 +43,7 @@ JS 调用依据：`src/www/assets/<对应模块>` 中 `useQuery(method,path)`、
 - 拆开 `lib-DyUkl8FG.js` 对 settings 操作的封装与批量失败显示行为。
 - 逐项解出接口的请求/响应字段（特别是 EPay/OKPay、RPC health、交易支付、分页和动态状态）。
 - 标出旧前端请求但当前 Go 无对应端点的潜在失配，使用浏览器联调确认；暂时不猜测。
+
+## 第五轮补充：原生 fetch 取证
+
+orders-BnOHTHOA.js 中明确调用 fetch(.../admin/api/v1/orders/export)，读取 response.blob() 并创建下载链接，文件名 orders-<时间戳>.csv。此前仅检查 useQuery/useMutation 导致遗漏；完整审计还需检查 fetch、XHR、window.location 和表单提交。

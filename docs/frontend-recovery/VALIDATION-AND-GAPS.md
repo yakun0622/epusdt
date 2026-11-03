@@ -27,7 +27,6 @@
 |---|---|---|
 | /admin/api/v1/notification-channels 完整 CRUD | Go 确认；原 /settings/notifications 编译页仅 show-submitted-data | 是“恢复原版演示”还是“新增真正通知管理”需分开任务 |
 | /admin/api/v1/orders/list-with-sub、/{trade_id}/with-sub | Go 确认；原 orders chunk 只证实普通详情/列表 | 若开发父子单列表，是增强功能，不冒充原版 1:1 |
-| /admin/api/v1/orders/export | Go 确认，text/csv；原 orders chunk 未确证直接调用该 endpoint | 先确认原 UI 的导出按钮是否有真实 handler/是否占位 |
 | /admin/api/v1/wallets/{id} | Go 确认；原地址管理使用列表和编辑，未确证独立详情请求 | 不能凭接口存在补出原 UI 路由 |
 | /admin/api/v1/settings/rate/refresh | Go 确认；前端 pay/settings 存在相关可能操作 | 需追踪封装后确认点击行为和错误结果 |
 | /admin/api/v1/config | Go 确认是管理员配置详情 | 不得和公开 config 互换、泄露商户凭证 |
@@ -39,7 +38,7 @@
 - `/payment-setup/integrations`：只读静态接口说明数组 GMPay/EPay/OKPay，不是商户接入实例列表。
 
 ## 4. 关键风险和纠偏
-1. **API 类型冲突**：以前草案 `CheckoutOrder` 的 timestamp 可选/字符串只是 JS 兼容性写法；Go `CheckoutCounterResponse` 实际返回 int64 Unix 秒。正式 TS 类型须以 Go 强类型为主、容错转换留边界层。
+1. **API 类型冲突**：以前草案 `CheckoutOrder` 的 timestamp 可选/字符串只是 JS 兼容性写法；Go `CheckoutCounterResponse` 实际使用 int64 Unix 毫秒（TimestampMilli），而 CreateTransactionResponse.expiration_time 使用 Unix 秒（Timestamp）。正式 TS 类型须以 Go 强类型为主、容错转换留边界层。
 2. **后端列表不统一**：只有订单分页对象，钱包/API Key/RPC/链/通知/设置返回数组。
 3. **明文凭证面**：管理员 config 可返回 OkPay ShopToken、RPC 列表 Model 带 api_key、NotificationChannel 的 config 可能含 token；前端不应日志化这些结果，生产安全审计需要单独检查后端返回是否脱敏。
 4. **无法证明完全还原**：缺少全部 205 文件的业务依赖图、真实浏览器截图、请求抓包、测试 fixture；这些仍是静态逆向之后的验收依赖。
@@ -49,3 +48,7 @@
 1. 完成 Go/service 的具体状态码错误契约和浏览器实际 JSON 样本（脱敏）。
 2. 补收银台父子单状态/回跳实测矩阵，确认全部面板。
 3. 再把稳定接口契约转成 `web/src/api/types` 的可编译 TS 文件；之后按模块恢复前端。
+
+## 第五轮纠偏
+
+原版订单导出已经在 orders-BnOHTHOA.js 中用原生 fetch + Blob 实现；并非未接入功能。Go 实际构造收银台和创建交易响应的时间单位不同，详见 PUBLIC-PAYMENT-CONTRACTS.md。

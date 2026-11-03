@@ -30,6 +30,14 @@
 
 前几轮 API 类型文档属于草案；与 Go 源码核对发生冲突时，以上第四轮字段级核对为准。仍未运行浏览器回归或变更任何前端代码。
 
+## 第五轮证据和纠偏（2026-11-04）
+
+- [ERROR-CODES-AND-UI.md](./ERROR-CODES-AND-UI.md)：完整服务端错误码及原前端错误映射差异。
+- [PARENT-CHILD-ORDER-STATES.md](./PARENT-CHILD-ORDER-STATES.md)：父子单约束、单个历史子单限制、支付/回调归属。
+- [ACCEPTANCE-TEST-MATRIX.md](./ACCEPTANCE-TEST-MATRIX.md)：29 个待执行回归用例。
+
+重要修正：checkout-counter-resp 三个时间戳为 Unix 毫秒，create-transaction expiration_time 为 Unix 秒；原订单页面导出 CSV 实际已使用原生 fetch。以 Go 实际赋值和原 JS 调用为准，不沿用此前错误推断。
+
 ## 证据等级
 
 - **JS 确认**：直接在 `src/www/assets/*.js` 发现的路由、字段、调用或条件。

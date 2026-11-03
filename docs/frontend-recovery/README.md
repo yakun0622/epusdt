@@ -22,6 +22,14 @@
 
 仍需浏览器视觉对比、HTTP 实测、收银台公共响应契约、全部 205 资源的完整自动化审计；以上文档都是带证据和待办项的静态逆向规格。
 
+## 第四轮字段级接口核对（2026-11-03）
+
+- [PUBLIC-PAYMENT-CONTRACTS.md](./PUBLIC-PAYMENT-CONTRACTS.md)：Go 公共收银台 DTO、支付配置的敏感/公开字段分离、切链/哈希提交和 302 回跳。
+- [ADMIN-LIST-CONTRACTS.md](./ADMIN-LIST-CONTRACTS.md)：后台各 GET 列表 data 是数组还是分页对象，以及 CSV 导出例外。
+- [VALIDATION-AND-GAPS.md](./VALIDATION-AND-GAPS.md)：请求体必填/选填、状态、后端能力与旧前端实际接入差异。
+
+前几轮 API 类型文档属于草案；与 Go 源码核对发生冲突时，以上第四轮字段级核对为准。仍未运行浏览器回归或变更任何前端代码。
+
 ## 证据等级
 
 - **JS 确认**：直接在 `src/www/assets/*.js` 发现的路由、字段、调用或条件。

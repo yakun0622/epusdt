@@ -13,6 +13,15 @@
 7. [IMPLEMENTATION.md](./IMPLEMENTATION.md)：按恢复优先级拆分工作包及验收条件。
 8. [PLAN.md](./PLAN.md)：初期计划，若与新文档冲突，以本索引下的已核实证据为准。
 
+## 第三轮深入取证（2026-11-03）
+
+- [DESIGN-TOKENS.md](./DESIGN-TOKENS.md)：Tailwind 4.2.2、浅/深 OKLCH 变量、圆角、断点、字体和首屏初始化。
+- [UI-COMPONENT-MATRIX.md](./UI-COMPONENT-MATRIX.md)：主要业务页面组件矩阵、共享组件结构、16 个订单表格字段。
+- [API-CONTRACTS.md](./API-CONTRACTS.md)：Go 结构体 JSON 字段、请求体、分页、Dashboard DTO 与敏感字段边界。
+- [PWA-AND-RELEASE.md](./PWA-AND-RELEASE.md)：Workbox 预缓存清单、Service Worker 与 Go Embed 发布/回滚风险。
+
+仍需浏览器视觉对比、HTTP 实测、收银台公共响应契约、全部 205 资源的完整自动化审计；以上文档都是带证据和待办项的静态逆向规格。
+
 ## 证据等级
 
 - **JS 确认**：直接在 `src/www/assets/*.js` 发现的路由、字段、调用或条件。

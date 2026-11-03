@@ -6,7 +6,7 @@
 
 - `router-aZWjwYfd.js` 检查 `accessToken` 并向 `/sign-in` 传递 `redirect`。
 - `sign-in-DJ_9-JGk.js` 登录后读取 `/auth/me` 与 `/auth/init-password-hash`；`password_is_default` 或特定初始密码指纹匹配时出现密码修改引导，对应 `/account/password`。
-- `auth-store-uaDKRR4l.js` 可见 `localStorage` 与 Bearer 相关操作；确切键名、刷新/失效语义尚待提取。当前 `web/src/api.ts` 使用 **sessionStorage**，不应误认为与原版一致；需要做安全与兼容决策。
+- `auth-store-uaDKRR4l.js` 已确认：JWT 保存在 Cookie `access_token`，用户缓存保存到 localStorage `auth_user`；401 清理并携带 `redirect` 跳转登录页。当前 `web/src/api.ts` 使用 **sessionStorage**，与原版不同；具体见 [AUTH-AND-API-CLIENT.md](./AUTH-AND-API-CLIENT.md)。
 - Go `auth_controller.go` 的 logout 是无服务端撤销的空操作，前端必须清理 token。不得把 logout API 返回成功理解成旧 JWT 已失效。
 
 ## 订单 `orders-BnOHTHOA.js`
@@ -48,9 +48,9 @@
 - 入口 `/cashier/$trade_id`，按交易号请求 checkout response；再读取公网 config，展示链/Token 或 OkPay 选项。
 - 页面切换逻辑出现 `method`、`select`、`payment`、`success`、`expired`、`timeout`、`not-found` 等状态；根据是否已选链、是否有 `payment_url` 或 `receive_address` 选择面板。
 - POST /pay/switch-network 选择网络；POST /pay/submit-tx-hash/{trade_id}，提交体包含 `block_transaction_id`。
-- GET /pay/check-status/{trade_id} 启用 `refetchInterval`，请求连续失败计数到 5 时停轮询/进入超时分支（具体间隔常量需要继续核实）。
+- GET /pay/check-status/{trade_id} 启用 `refetchInterval`，请求连续失败计数到 5 时停轮询/进入超时分支（已经确认轮询为 5000ms）。
 - 状态 `2` 导向成功、`3` 导向过期（**收银台语义，不应盲目复用给所有列表枚举**）。
-- 成功且有 `redirect_url` 时会启动重定向查询并跳转；实际倒计时/延时、回跳取消和白名单策略待验证。
+- 成功且有 `redirect_url` 时会启动重定向查询并跳转；跳转延时已确认 3000ms；回跳取消和白名单策略待验证，详见 [CHECKOUT-STATE-MACHINE.md](./CHECKOUT-STATE-MACHINE.md)。
 - 显示金额与代币、地址复制/二维码等行为的细节须通过浏览器验证；涉及真实资金的流程必须使用测试订单。
 
 ## 工程差异和高风险决策

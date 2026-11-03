@@ -4,11 +4,14 @@
 
 ## 阅读顺序
 
-1. [ROUTES.md](./ROUTES.md)：前端真实路由/打包模块、受保护边界和占位页面。
-2. [API-MAPPING.md](./API-MAPPING.md)：JS 实际调用与 Go 路由对照，避免根据 Go API 擅自推断前端功能。
-3. [BEHAVIOR.md](./BEHAVIOR.md)：表单字段、状态机、存储、交互和高风险边界。
-4. [IMPLEMENTATION.md](./IMPLEMENTATION.md)：按恢复优先级拆分工作包及验收条件。
-5. [PLAN.md](./PLAN.md)：初期计划，若与新文档冲突，以本索引下的已核实证据为准。
+1. [CHECKOUT-STATE-MACHINE.md](./CHECKOUT-STATE-MACHINE.md)：收银台状态图、5 秒轮询、3 秒跳转与异常码。
+2. [AUTH-AND-API-CLIENT.md](./AUTH-AND-API-CLIENT.md)：JWT Cookie、用户缓存、401/400/500 响应处理。
+3. [LAYOUT-AND-LOCALES.md](./LAYOUT-AND-LOCALES.md)：后台/登录布局、主题及六种语言。
+4. [ROUTES.md](./ROUTES.md)：前端真实路由/打包模块、受保护边界和占位页面。
+5. [API-MAPPING.md](./API-MAPPING.md)：JS 实际调用与 Go 路由对照，避免根据 Go API 擅自推断前端功能。
+6. [BEHAVIOR.md](./BEHAVIOR.md)：表单字段、状态机、存储、交互和高风险边界。
+7. [IMPLEMENTATION.md](./IMPLEMENTATION.md)：按恢复优先级拆分工作包及验收条件。
+8. [PLAN.md](./PLAN.md)：初期计划，若与新文档冲突，以本索引下的已核实证据为准。
 
 ## 证据等级
 

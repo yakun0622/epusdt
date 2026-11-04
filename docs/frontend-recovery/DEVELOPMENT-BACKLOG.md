@@ -1,6 +1,17 @@
 # web/ 前端恢复任务清单（第六轮）
 
-> **所有任务当前均未实施**。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
+> **当前状态（2026-11-04）**：W11/W12/W13 已有首批代码提交，但依赖安装、TypeScript 编译和测试未执行，暂列“已编码、未验收”；W00 只完成源码基线核对，尚未完成本机完整构建。其他任务仍未实施。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
+
+## 首批开发状态
+
+| 任务 | 当前状态 | 证明 |
+|---|---|---|
+| W00 | 部分完成（静态基线检查；缺实测） | web/package.json、tsconfig、vite.config.ts 与 W00-W13-IMPLEMENTATION-REPORT |
+| W11 | 已编码，未验收 | web/src/api/client.ts、api.ts、vite.config.ts |
+| W12 | 已编码，未验收 | web/src/api/types/*、api/endpoints/checkout.ts |
+| W13 | 已编码，未验收 | web/src/api/client.test.ts、api/types/payment.test.ts；尚未运行 Vitest |
+
+**不能把这些任务标为 Done**：仍需实际运行 npm install、typecheck、test、build，并检查浏览器中真实响应。下一步首先完成验证与必要修复，再进入 W10（路由系统）。
 
 ## M0｜基线和取证
 

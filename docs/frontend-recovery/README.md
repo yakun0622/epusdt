@@ -2,6 +2,11 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
+## 实际编码进度（2026-11-04）
+
+- [W00-W13-IMPLEMENTATION-REPORT.md](./W00-W13-IMPLEMENTATION-REPORT.md)：首次实现 admin/payment Client、Go DTO、时间单位校验和 Vitest tests。代码已提交但尚未安装依赖/运行 npm 命令；不是已通过验收。
+- [DEVELOPMENT-BACKLOG.md](./DEVELOPMENT-BACKLOG.md)：W00/W11/W12/W13 状态标注为部分或已编码未验收，其他仍待做。
+
 ## 开发入口（第六轮收敛，2026-11-04）
 
 - **[DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md)**：以当前 web/ 骨架为基线的 M0–M7 依赖、架构、验收及正式发布门槛。

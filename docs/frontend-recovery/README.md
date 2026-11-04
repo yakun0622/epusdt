@@ -2,6 +2,14 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
+## 开发入口（第六轮收敛，2026-11-04）
+
+- **[DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md)**：以当前 web/ 骨架为基线的 M0–M7 依赖、架构、验收及正式发布门槛。
+- **[DEVELOPMENT-BACKLOG.md](./DEVELOPMENT-BACKLOG.md)**：W00–W63 任务拆分、依赖、改动范围和对应 T01–T29 测试。
+- **[ACCEPTANCE-TEST-MATRIX.md](./ACCEPTANCE-TEST-MATRIX.md)**：目前 29 项均**待执行**，不可据此声称通过。
+
+下一轮建议从 W00/W11/W12/W13 开始；正式编码前必须保持旧 src/www 不变。此处是计划文档，不是已执行状态。
+
 ## 阅读顺序
 
 1. [CHECKOUT-STATE-MACHINE.md](./CHECKOUT-STATE-MACHINE.md)：收银台状态图、5 秒轮询、3 秒跳转与异常码。

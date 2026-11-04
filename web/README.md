@@ -30,8 +30,12 @@ npm run build
 
 ## 未实现
 
-原版后台布局、完整订单表、设置、钱包、密钥、通知、链与代币、RPC、完整收银台、PWA、国际化与自动化端到端测试。见 `docs/frontend-recovery/PLAN.md`。
+原版后台布局、完整订单表、设置、钱包、密钥、通知、链与代币、RPC、完整收银台、PWA、国际化与自动化端到端测试。见 `docs/frontend-recovery/DEVELOPMENT-ROADMAP.md` 和 `docs/frontend-recovery/DEVELOPMENT-BACKLOG.md`，初期背景见 `docs/frontend-recovery/PLAN.md`。
 
 ## 安全注意
 
 JWT 暂存 sessionStorage（关闭标签页后清理），这是恢复过程中的临时设计，最终需要结合原版行为和实际安全需求复核。不要在生产环境输入真实资金操作参数进行未验证测试。
+
+## 实施任务索引（2026-11-04）
+
+当前只是脚手架、未经构建/浏览器验收；请从 `docs/frontend-recovery/DEVELOPMENT-ROADMAP.md` 阅读 M0–M7 开发顺序，并按 `DEVELOPMENT-BACKLOG.md` 的 W00–W63 小切片在 master 实现。下一步是 API Client 分离、Go DTO 契约和测试底座（W00/W11/W12/W13），不是覆盖生产 `src/www`。

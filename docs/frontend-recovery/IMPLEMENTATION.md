@@ -1,4 +1,6 @@
-# 前端恢复实施规格与验收顺序
+# 前端恢复实施规格与验收顺序（早期基线）
+
+> 2026-11-04 补充：此文件是早期大阶段路线；实际实现请以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 和 [DEVELOPMENT-BACKLOG.md](./DEVELOPMENT-BACKLOG.md) 的 M0–M7 / W00–W63 为当前任务清单。遇到契约冲突，以第五轮服务端赋值、错误码和已核实 JS 为准。
 
 ## 不变约束
 

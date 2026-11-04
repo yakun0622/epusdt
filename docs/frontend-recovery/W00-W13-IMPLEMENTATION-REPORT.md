@@ -30,3 +30,7 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 ```
 
 必须保存 Node/npm 实际版本、命令输出和测试结果，修复失败后再标记 W00/W11/W12/W13 完成。
+
+## 静态复查修正
+
+支付响应新增 Wire 类型（带普通 number 的 JSON 输入）与已验证的 branded 时间类型分层：CheckoutCounterWire/CreateTransactionWire → decode → CheckoutCounter/CreateTransactionResponse。否则测试 fixture 的 number 在严格 TS 检查中无法赋给品牌类型。此修正同样尚未通过实际 tsc 和 Vitest。

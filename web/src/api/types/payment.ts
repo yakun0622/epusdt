@@ -60,7 +60,13 @@ export interface AdminPaymentConfig extends Omit<PublicPaymentConfig, 'okpay'> {
   };
 }
 /** Strict boundary parsing: Go struct comments incorrectly call these seconds. */
-export function decodeCheckoutCounter(value: CheckoutCounter): CheckoutCounter {
+export type CheckoutCounterWire = Omit<CheckoutCounter, 'created_at' | 'server_time' | 'expiration_time'> & {
+  created_at: number; server_time: number; expiration_time: number;
+};
+export type CreateTransactionWire = Omit<CreateTransactionResponse, 'expiration_time'> & {
+  expiration_time: number;
+};
+export function decodeCheckoutCounter(value: CheckoutCounterWire): CheckoutCounter {
   return {
     ...value,
     created_at: parseUnixMilliseconds(value.created_at),
@@ -68,6 +74,6 @@ export function decodeCheckoutCounter(value: CheckoutCounter): CheckoutCounter {
     expiration_time: parseUnixMilliseconds(value.expiration_time),
   };
 }
-export function decodeCreateTransaction(value: CreateTransactionResponse): CreateTransactionResponse {
+export function decodeCreateTransaction(value: CreateTransactionWire): CreateTransactionResponse {
   return { ...value, expiration_time: parseUnixSeconds(value.expiration_time) };
 }

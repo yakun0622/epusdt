@@ -2,12 +2,20 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
+## 当前最新交付：W30/W32 订单只读管理（2026-11-10）
+
+- [W30-W32-IMPLEMENTATION.md](./W30-W32-IMPLEMENTATION.md)：Go 订单分页筛选契约、真实只读订单列表/详情、CSV Blob 下载及修正后端导出最大 10,000 行。
+- 前端 [Actions #42664249919](https://github.com/yakun0622/epusdt/actions/runs/42664249919)：TypeScript、11 个测试文件/35 项测试、Vite 构建 **通过**。
+- Go [Actions #42664249965](https://github.com/yakun0622/epusdt/actions/runs/42664249965)：205 条订单的 CSV 导出回归测试 **通过**。
+- **W31 的关闭、人工补单、回调重发没有实现**；下一轮优先 W33/W34 钱包管理。
+- 所有自动验证是单元/构建级别；T20/T22 等真实浏览器 + 后端联调仍需留存证据。
+
 ## W14/W15/W16 开发交付（2026-11-10）
 
 - [W14-W16-IMPLEMENTATION.md](./W14-W16-IMPLEMENTATION.md)：主题 token、Cookie 和系统主题、六语言词条、通用 UI 组件、样例预览及 Actions 成功结果。
 - 自动编译 [#42659421942](https://github.com/yakun0622/epusdt/actions/runs/42659421942)：8 文件/25 单测，TypeScript、Vite 构建通过。浏览器视觉对照、完整原版消息抽取未完成。
 
-## 实际编码进度（更新于 2026-11-09）
+## 早期编码进度（历史记录，最新情况见上方）
 
 - [W10-ROUTING-IMPLEMENTATION.md](./W10-ROUTING-IMPLEMENTATION.md)：已编码的基础浏览器路由、公共支付隔离和登录回跳，尚未构建/测试验收。
 
@@ -20,7 +28,7 @@
 - **[DEVELOPMENT-BACKLOG.md](./DEVELOPMENT-BACKLOG.md)**：W00–W63 任务拆分、依赖、改动范围和对应 T01–T29 测试。
 - **[ACCEPTANCE-TEST-MATRIX.md](./ACCEPTANCE-TEST-MATRIX.md)**：目前 29 项均**待执行**，不可据此声称通过。
 
-下一轮建议从 W00/W11/W12/W13 开始；正式编码前必须保持旧 src/www 不变。此处是计划文档，不是已执行状态。
+原始路线图制定时计划从 W00 开始；当前已完成到 W30/W32 第一批。开发过程中及生产替换门槛通过前始终保持旧 src/www 不变。
 
 ## 阅读顺序
 
@@ -69,7 +77,7 @@
 - 已通过 GitHub 目录索引确认 `src/www/assets` **205 个条目**，未见 `.map`。**目前详细逐文件语义拆解的是关键业务模块，并非已经逐一完整审计全部 205 项**；其余包含大量字体、Monaco、框架/组件/vendor 文件。
 - 已直接检查主要业务文件：`router-aZWjwYfd.js`、`dashboard-Cw_CStip.js`、`orders-BnOHTHOA.js`、`addresses-JEZCoidP.js`、`keys-DoklatfJ.js`、`chains-tUDg5ohy.js`、`rpc-BkV2cf1-.js`、`settings-CHL6qaLI.js`、`route-BkjShyH8.js`、`system-CkRcAjXh.js`、`telegram-Cecf2wsy.js`、`pay-fSH4oF9b.js`、`okpay-DzwNhqlx.js`、`epay-B1eGq7C0.js`、`notifications-CuHKJSeV.js`、`sign-in-DJ_9-JGk.js`、`auth-store-uaDKRR4l.js`、`_trade_id-B2s-YYlo.js`、`integrations-DDlt0riN.js`、`route-TItYb9Ps.js`、`password-DKY5aHg5.js`、`chains-store-BPLu-HM5.js` 等；对超大共享依赖采用关键字/调用点局部分析。
 - 未运行原 UI、未抓包、未验证所有请求/响应及视觉像素级一致性。文档不宣称完成全部源码恢复。
-- 本轮只写文档，不改动 `web/`、`src/www/`、Go 业务或 CI。
+- 以上内容特指早期静态逆向阶段；此后已开发 `web/`、修复 CSV 导出的 Go 只读查询并增加专项 CI。生产 `src/www/` 仍保持原样。
 
 ## 原版技术结构（JS 确认）
 

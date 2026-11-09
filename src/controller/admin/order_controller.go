@@ -242,9 +242,7 @@ func (c *BaseAdminController) ResendCallback(ctx echo.Context) error {
 // @Router       /admin/api/v1/orders/export [get]
 func (c *BaseAdminController) ExportOrders(ctx echo.Context) error {
 	f := parseOrderFilter(ctx)
-	f.Page = 1
-	f.PageSize = 10000
-	rows, _, err := data.ListOrders(f)
+	rows, err := data.ListOrdersForExport(f)
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}

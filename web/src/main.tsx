@@ -10,7 +10,6 @@ import { Button, Card, LoadingState, PreferencesControls, TextField, ToastProvid
 import { I18nProvider, useI18n } from './i18n/i18n-provider';
 import type { MessageKey } from './i18n/messages';
 import { ThemeProvider } from './theme/theme-provider';
-import './theme/tokens.css';
 import './style.css';
 
 const titles: Partial<Record<PageId, MessageKey>> = {

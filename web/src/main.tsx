@@ -6,6 +6,7 @@ import { useBrowserRoute } from './app/use-browser-route';
 import { AdminLayout } from './layouts/admin-layout';
 import { PasswordPage } from './features/auth/password-page';
 import { AppearancePage } from './features/settings/appearance-page';
+import { OrdersPage } from './features/orders/orders-page';
 import { Button, Card, LoadingState, PreferencesControls, TextField, ToastProvider } from './components/ui';
 import { I18nProvider, useI18n } from './i18n/i18n-provider';
 import type { MessageKey } from './i18n/messages';
@@ -73,9 +74,9 @@ function App() {
     if (!profile || route.public) return;
     let alive = true;
     setResult(null); setError('');
-    if (route.page !== 'dashboard' && route.page !== 'orders') return;
+    if (route.page !== 'dashboard') return;
     setLoadingData(true);
-    const endpoint = route.page === 'dashboard' ? '/dashboard/overview' : '/orders';
+    const endpoint = '/dashboard/overview';
     api<unknown>(endpoint).then(data => { if (alive) setResult(data); })
       .catch(e => {
         if (!alive) return;
@@ -149,12 +150,13 @@ function App() {
     </PublicPage>;
   if (!profile) return <main className="center"><LoadingState label={t('auth.checking')}/></main>;
 
-  const section = route.page === 'dashboard' || route.page === 'orders';
+  const section = route.page === 'dashboard';
   return <AdminLayout pathname={route.pathname} title={t(titles[route.page] ?? 'app.console')}
     user={profile} onNavigate={go} onLogout={logout}>
     {error && <p role="alert" className="error">{error}</p>}
     {route.page === 'account-password' ? <PasswordPage onPasswordChanged={clearSession}/> :
       route.page === 'settings-appearance' ? <AppearancePage/> :
+      route.page === 'orders' ? <OrdersPage location={location} onNavigate={go}/> :
       section ? (loadingData ? <LoadingState label={t('common.loading')}/> :
         <Card><p className="muted">{t('pages.apiPreview')}</p>
           <pre>{JSON.stringify(result, null, 2)}</pre>

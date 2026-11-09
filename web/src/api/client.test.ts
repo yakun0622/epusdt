@@ -52,6 +52,16 @@ describe('Go envelope API client', () => {
     expect(await csv.text()).toContain('trade_id,amount');
   });
 
+  it('rejects a successful HTML fallback when expecting CSV', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('<html>SPA</html>', {
+      status: 200, headers: { 'content-type': 'text/html' },
+    }));
+    const client = createApiClient({ basePath: '/admin/api/v1', fetchImpl });
+    await expect(client.download('/orders/export')).rejects.toMatchObject({
+      status: 200, name: 'ApiError',
+    });
+  });
+
   it('blocks absolute/protocol-relative paths', async () => {
     const api = createApiClient({ basePath: '' });
     await expect(api.json('https://example.test')).rejects.toThrow(TypeError);

@@ -13,7 +13,7 @@ describe('W30 orders page rendering', () => {
       </ToastProvider></I18nProvider></ThemeProvider>
     );
     expect(html).toContain('type="datetime-local"');
-    expect(html).toContain('pageSize');
+    expect(html).toContain('Export CSV');
     expect(html).not.toContain('/mark-paid');
     expect(html).not.toContain('/resend-callback');
     expect(html).not.toContain('/close');

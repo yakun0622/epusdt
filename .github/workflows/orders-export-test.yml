@@ -1,0 +1,46 @@
+name: Orders CSV export regression (Go)
+
+# Only validate the read-only CSV export backend when related Go files change,
+# or when explicitly launched from the Actions tab.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'src/model/data/order_admin_data.go'
+      - 'src/model/data/order_admin_export_test.go'
+      - 'src/controller/admin/order_controller.go'
+      - '.github/workflows/orders-export-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orders-export-go-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  export-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: Test read-only CSV export above 200 rows
+        working-directory: src
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./model/data -run '^TestListOrdersForExportDoesNotStopAtUIPageLimit$' -count=1 -v
+
+      - name: Report
+        run: echo 'Go export regression passed; no production deployment performed.'

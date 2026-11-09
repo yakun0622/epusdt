@@ -24,8 +24,9 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - W14：Light / Dark / System，原 CSS 语义色与 Cookie/系统主题持久化，首屏防闪烁。
 - W15：六语言（en-US、zh-CN、zh-TW、ja-JP、ko-KR、ru-RU）和 77 个新编写核心翻译键、语言 Cookie。
 - W16：通用 Button、Input/Select、Card、DataTable、Dialog、Toast、空态/加载态，`/settings/appearance` 可预览。
+- W30/W32：真实只读订单表格、分页/筛选、详情弹窗与 CSV Blob 导出；配套 Go 独立最多 10,000 条导出查询修复。W31 订单资金/回调操作**未实施**。
 
-当前 Dashboard/Orders 仍是 **只读 JSON API 预览**，其他后台业务页、完整支付流程、PWA 与旧 UI 像素级对照尚未完成。演示数据不是真实商户数据。
+当前 Dashboard 仍是 **只读 JSON API 预览**，`/orders` 已变为真实只读表格/筛选/详情/CSV。钱包、密钥等其他后台业务页、完整支付流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
 
 ## Actions 编译
 
@@ -40,8 +41,12 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - 当前任务：`docs/frontend-recovery/DEVELOPMENT-BACKLOG.md`
 - W14/W15/W16 交付报告：`docs/frontend-recovery/W14-W16-IMPLEMENTATION.md`
 
-**下一步 W30/W32**：订单列表、分页筛选、订单详情、CSV 下载；订单关闭、标记支付和回调重发等危险操作留到 W31。
+**下一步建议 W33/W34**：钱包地址列表、编辑、启停、批量导入和部分失败反馈；W31 订单关闭、标记支付和回调重发等危险操作仍留在独立安全阶段。
 
 ## 安全边界
 
 JWT 存储为浏览器可读 Cookie，是原版行为，不提供 HttpOnly 保护。正式部署前需完成浏览器安全验证、密钥审计、支付状态模拟与回滚演练。
+
+## W30/W32 交付记录
+
+详见 `docs/frontend-recovery/W30-W32-IMPLEMENTATION.md`。前端自动编译与 Go 205 条 CSV 回归测试已通过；浏览器真实联调、日期/时区及 10,000 条边界尚待验证。`web/dist` 不会替换 `src/www`。

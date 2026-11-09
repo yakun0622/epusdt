@@ -87,12 +87,12 @@ func buildOrderListQuery(f OrderListFilter) *gorm.DB {
 // This deliberately does not reuse ListOrders' 200-row UI page-size cap.
 // It is read-only and uses the exact same filters as the list.
 func ListOrdersForExport(f OrderListFilter) ([]mdb.Orders, error) {
-  var rows []mdb.Orders
-  err := buildOrderListQuery(f).
-    Order("id DESC").
-    Limit(10000).
-    Find(&rows).Error
-  return rows, err
+	var rows []mdb.Orders
+	err := buildOrderListQuery(f).
+		Order("id DESC").
+		Limit(10000).
+		Find(&rows).Error
+	return rows, err
 }
 
 // CountOrdersByStatus returns how many orders exist in each status.

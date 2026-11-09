@@ -99,7 +99,7 @@ function OrderDetails({ tradeId, onClose }: { tradeId: string | null; onClose: (
 }
 
 export function OrdersPage({ location, onNavigate }: OrdersPageProps) {
-  const { locale } = useI18n();
+  const { locale, t: generalT } = useI18n();
   const { notify } = useToast();
   const t = useCallback((key: OrderMessageKey) => orderLabel(locale, key), [locale]);
   const filters = useMemo(() => readOrderFilters(getSearch(location)), [location]);
@@ -211,7 +211,9 @@ export function OrdersPage({ location, onNavigate }: OrdersPageProps) {
       </div>
       <p className="muted orders-export-note">{t('filtersExportNote')}</p>
       {error && <p role="alert" className="error">{error}</p>}
-      <DataTable rows={data?.list ?? []} loading={loading} loadingLabel={t('loading')}
+      {error && !loading && !data ? <div className="orders-load-error">
+        <Button variant="secondary" onClick={() => setRefreshVersion(version => version + 1)}>{generalT('common.retry')}</Button>
+      </div> : <DataTable rows={data?.list ?? []} loading={loading} loadingLabel={t('loading')}
         emptyLabel={t('noOrders')} ariaLabel={t('title')}
         getRowKey={row => row.trade_id}
         columns={[
@@ -230,7 +232,7 @@ export function OrdersPage({ location, onNavigate }: OrdersPageProps) {
           { key: 'created', title: t('created'), render: row => showDate(row.created_at, locale, t('empty')) },
           { key: 'detail', title: t('details'), render: row =>
             <Button size="sm" variant="ghost" onClick={() => setSelected(row.trade_id)}>{t('details')}</Button> },
-        ]}/>
+        ]}/>}
       <div className="orders-pagination">
         <span className="muted">{t('total')}: {total.toLocaleString(locale)}</span>
         <div className="orders-page-controls">

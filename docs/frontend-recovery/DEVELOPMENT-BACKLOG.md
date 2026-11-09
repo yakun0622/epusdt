@@ -2,6 +2,15 @@
 
 > **当前状态（2026-11-10）**：W10～W16 的首轮代码、W20/W21 基础布局已落地，相关 Actions 编译及单元测试通过；浏览器对照/真实支付仍未完成，不能等同业务端到端验收。W14/W15/W16 详见本次交付记录。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
 
+## 2026-11-10：W30/W32 订单只读功能落地
+
+- W30：`web/src/features/orders/orders-page.tsx` 替换旧 JSON 预览；支持分页（页面 pageSize → Go page_size、10–200）、关键字/网络/Token/收款地址/状态/创建时间（Unix 秒）筛选，详情 `GET /orders/:trade_id`，错误重试和加载/空态。
+- W32：`GET /orders/export` 使用同一筛选（**不附带分页**）、Blob CSV + 文件名下载，非 CSV/HTML fallback 明确拒绝。已修复 Go CSV 接口复用 ListOrders 的 200 行上限：专用只读 `ListOrdersForExport` 最多返回 10,000 行，业务列表仍封顶 200。
+- **W31 未实施**：订单关闭、人工标记支付、重发回调均未在前端接入。
+- [前端 Actions #42663028503](https://github.com/yakun0622/epusdt/actions/runs/42663028503)：TypeScript、11 文件/35 测试和 Vite 构建成功（后续 UI 错误态调整需最终运行复核）。
+- [Go Actions #42663566969](https://github.com/yakun0622/epusdt/actions/runs/42663566969)：205 行 CSV 回归测试成功（Go 格式整理后需最终运行复核）。
+- **未完成的验收**：实际浏览器 + 已登录后端联调、10,000 行边界测试、时区/日期范围截图、真实 CSV 在 Excel 等表格软件中打开测试、W31 安全操作验收；不修改生产 src/www。
+
 ## 2026-11-10：W14/W15/W16 第一批已实现并通过自动构建
 
 - W14：原 CSS 的浅/深 OKLCH 语义 token、`theme` Cookie 365 天、首屏预设、跟随 `prefers-color-scheme`、主题控制。字体仍以 Inter/system fallback 为主；原版 font-provider 选择及实际字体切片尚待核实。
@@ -114,4 +123,4 @@
 - 未通过项与回滚方式；
 - 明确声明是否动过 `src/www`、Go 和 CI。
 
-**当前最新顺序**：W30 订单只读列表/分页/筛选/详情 → W32 CSV 下载 → W31 关闭/标记支付/重发回调（须先做安全测试），然后推进其余后台模块；未通过完整浏览器和支付回归前禁止替换 src/www。
+**当前最新顺序**：W31 订单关闭/经链上验证的人工补单/回调重发（须独立状态机与权限测试，不能在生产做假支付验证），或先推进 W33/W34 钱包管理。建议先 W33/W34 以保持下一轮主要是低风险功能；未通过完整浏览器和支付回归前禁止替换 src/www。

@@ -2,6 +2,11 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
+## W14/W15/W16 开发交付（2026-11-10）
+
+- [W14-W16-IMPLEMENTATION.md](./W14-W16-IMPLEMENTATION.md)：主题 token、Cookie 和系统主题、六语言词条、通用 UI 组件、样例预览及 Actions 成功结果。
+- 自动编译 [#42659421942](https://github.com/yakun0622/epusdt/actions/runs/42659421942)：8 文件/25 单测，TypeScript、Vite 构建通过。浏览器视觉对照、完整原版消息抽取未完成。
+
 ## 实际编码进度（更新于 2026-11-09）
 
 - [W10-ROUTING-IMPLEMENTATION.md](./W10-ROUTING-IMPLEMENTATION.md)：已编码的基础浏览器路由、公共支付隔离和登录回跳，尚未构建/测试验收。

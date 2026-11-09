@@ -1,6 +1,15 @@
 # web/ 前端恢复任务清单（第六轮）
 
-> **当前状态（2026-11-04）**：W10/W11/W12/W13 已有首批代码提交，但依赖安装、TypeScript 编译和测试未执行，暂列“已编码、未验收”；W00 只完成源码基线核对，尚未完成本机完整构建。其他任务仍未实施。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
+> **当前状态（2026-11-10）**：W10～W16 的首轮代码、W20/W21 基础布局已落地，相关 Actions 编译及单元测试通过；浏览器对照/真实支付仍未完成，不能等同业务端到端验收。W14/W15/W16 详见本次交付记录。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
+
+## 2026-11-10：W14/W15/W16 第一批已实现并通过自动构建
+
+- W14：原 CSS 的浅/深 OKLCH 语义 token、`theme` Cookie 365 天、首屏预设、跟随 `prefers-color-scheme`、主题控制。字体仍以 Inter/system fallback 为主；原版 font-provider 选择及实际字体切片尚待核实。
+- W15：`en-US`、`zh-CN`、`zh-TW`、`ja-JP`、`ko-KR`、`ru-RU` 六语言，`PARAGLIDE_LOCALE` 40 天 Cookie、浏览器偏好回退、77 个**新编写**核心 UI 文案。尚非原版 Paraglide 全量消息源码还原。
+- W16：Button、TextField、SelectField、Card、DataTable、Dialog、Toast、EmptyState、LoadingState；`/settings/appearance` 提供真实主题/语言切换与本地组件预览，示例数据非真实订单。
+- [GitHub Actions #42659421942](https://github.com/yakun0622/epusdt/actions/runs/42659421942) 通过：TypeScript、Vitest **8 文件 / 25 项测试**、Vite 构建 **49 个模块**。
+- 核心场景尚需 T25 360/768/1280px 浏览器截图对照，及主题/语言刷新、系统主题变化的真实浏览器回归。
+- **下一阶段**：W30/W32 订单只读列表、分页筛选、详情与 CSV 文件下载；验收稳定后再实施 W31 高风险订单操作。
 
 ## 2026-11-10：W20/W21 第一批已实现
 
@@ -19,7 +28,7 @@
 | W12 | 已编码，未验收 | web/src/api/types/*、api/endpoints/checkout.ts |
 | W13 | 已编码，未验收 | web/src/api/client.test.ts、api/types/payment.test.ts；尚未运行 Vitest |
 
-**不能把这些任务标为 Done**：仍需实际运行 npm install、typecheck、test、build，并检查浏览器中真实响应。下一步应先运行构建及单测并修复问题，再深化 W20（认证）和 W21（布局）；当前 W10 仍是轻量路由第一批。
+**验收边界**：W10～W16 及 W20/W21 已有自动 typecheck/test/build 通过记录；真实浏览器视觉、网络 API 契约、支付链路和旧原版对照仍未验收。旧 W00-W13 的静态阶段记录为历史快照。
 
 ## M0｜基线和取证
 
@@ -105,4 +114,4 @@
 - 未通过项与回滚方式；
 - 明确声明是否动过 `src/www`、Go 和 CI。
 
-**当前最新顺序**：优先实际运行 W10–W13 的 typecheck/test/build，再实现 W20/W21，未验收前不替换 src/www。
+**当前最新顺序**：W30 订单只读列表/分页/筛选/详情 → W32 CSV 下载 → W31 关闭/标记支付/重发回调（须先做安全测试），然后推进其余后台模块；未通过完整浏览器和支付回归前禁止替换 src/www。

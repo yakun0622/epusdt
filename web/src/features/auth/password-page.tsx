@@ -1,36 +1,43 @@
 import { useState, type FormEvent } from 'react';
 import { auth, ApiError } from '../../api';
+import { Button, Card, TextField, useToast } from '../../components/ui';
+import { useI18n } from '../../i18n/i18n-provider';
 
-export function PasswordPage() {
+export function PasswordPage({ onPasswordChanged }: { onPasswordChanged: () => void }) {
+  const { t } = useI18n();
+  const { notify } = useToast();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setError(''); setSuccess('');
-    if (newPassword.length < 6) { setError('新密码至少 6 位'); return; }
-    if (confirm !== newPassword) { setError('两次输入的新密码不一致'); return; }
+    setError('');
+    if (newPassword.length < 6) { setError(t('auth.passwordTooShort')); return; }
+    if (confirm !== newPassword) { setError(t('auth.passwordMismatch')); return; }
     setBusy(true);
     try {
       await auth.changePassword(oldPassword, newPassword);
       setOldPassword(''); setNewPassword(''); setConfirm('');
-      setSuccess('密码修改成功，请重新登录以使用新会话。');
+      notify({ title: t('auth.passwordChanged'), tone: 'success' });
+      onPasswordChanged(); // invalidate the old session on success
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '修改失败，请重试');
+      setError(e instanceof ApiError ? e.message : t('auth.passwordChangeError'));
     } finally { setBusy(false); }
   }
-  return <section className="panel form-panel">
-    <h2>修改管理员密码</h2>
-    <form onSubmit={submit}>
-      <label>原密码<input type="password" required autoComplete="current-password" value={oldPassword} onChange={e => setOldPassword(e.target.value)}/></label>
-      <label>新密码<input type="password" required minLength={6} autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)}/></label>
-      <label>确认新密码<input type="password" required autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)}/></label>
+  return <Card className="form-panel" title={t('auth.changePassword')}>
+    <form onSubmit={submit} className="form-stack">
+      <TextField label={t('auth.currentPassword')} type="password" required
+        autoComplete="current-password" value={oldPassword} onChange={e => setOldPassword(e.target.value)}/>
+      <TextField label={t('auth.newPassword')} type="password" required minLength={6}
+        autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)}/>
+      <TextField label={t('auth.confirmPassword')} type="password" required
+        autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)}/>
       {error && <p role="alert" className="error">{error}</p>}
-      {success && <p role="status">{success}</p>}
-      <button type="submit" disabled={busy}>{busy ? '提交中…' : '保存密码'}</button>
+      <div className="form-actions"><Button type="submit" busy={busy}>
+        {busy ? t('common.submitting') : t('common.save')}
+      </Button></div>
     </form>
-  </section>;
+  </Card>;
 }

@@ -1,16 +1,29 @@
 import type { ReactNode } from 'react';
 import { navItems } from '../app/routes';
+import { Button, PreferencesControls, SelectField } from '../components/ui';
+import { useI18n } from '../i18n/i18n-provider';
+import type { MessageKey } from '../i18n/messages';
 import type { Profile } from '../api/types/admin';
 
-const secondary = [
-  { path: '/settings/system', label: '系统' },
-  { path: '/settings/telegram', label: 'Telegram' },
-  { path: '/settings/pay', label: '支付参数' },
-  { path: '/settings/epay', label: 'EPay' },
-  { path: '/settings/okpay', label: 'OkPay' },
-  { path: '/settings/appearance', label: '外观' },
-  { path: '/account/password', label: '修改密码' },
-  { path: '/help', label: '帮助' },
+const navLabels: Record<string, MessageKey> = {
+  '/dashboard': 'nav.dashboard',
+  '/orders': 'nav.orders',
+  '/addresses': 'nav.addresses',
+  '/chains': 'nav.chains',
+  '/rpc': 'nav.rpc',
+  '/keys': 'nav.keys',
+  '/payment-setup': 'nav.paymentSetup',
+  '/settings': 'nav.settings',
+};
+const secondary: ReadonlyArray<{ path: string; key: MessageKey }> = [
+  { path: '/settings/system', key: 'settings.system' },
+  { path: '/settings/telegram', key: 'settings.telegram' },
+  { path: '/settings/pay', key: 'settings.pay' },
+  { path: '/settings/epay', key: 'settings.epay' },
+  { path: '/settings/okpay', key: 'settings.okpay' },
+  { path: '/settings/notifications', key: 'settings.notifications' },
+  { path: '/settings/display', key: 'settings.display' },
+  { path: '/settings/appearance', key: 'settings.appearance' },
 ];
 
 interface AdminLayoutProps {
@@ -23,42 +36,54 @@ interface AdminLayoutProps {
 }
 
 export function AdminLayout({ pathname, title, user, onNavigate, onLogout, children }: AdminLayoutProps) {
+  const { t } = useI18n();
   const isSettings = pathname.startsWith('/settings');
   return <div className="app">
-    <aside className="admin-sidebar" aria-label="管理导航">
-      <div className="brand"><span className="brand-icon">G</span><span>GMPay <small>Console</small></span></div>
-      <nav aria-label="主要菜单" className="admin-nav">
-        {navItems.map(item => <button key={item.path} type="button"
+    <aside className="admin-sidebar" aria-label={t('app.console')}>
+      <div className="brand"><span className="brand-icon">G</span>
+        <span>{t('app.brand')} <small>{t('app.console')}</small></span></div>
+      <nav aria-label={t('app.console')} className="admin-nav">
+        {navItems.map(item => <Button key={item.path} variant="ghost" size="sm"
           aria-current={pathname === item.path ? 'page' : undefined}
           className={pathname === item.path || pathname.startsWith(item.path + '/') ? 'active' : ''}
-          onClick={() => onNavigate(item.path)}>{item.label}</button>)}
+          onClick={() => onNavigate(item.path)}>{t(navLabels[item.path])}</Button>)}
       </nav>
       <div className="nav-footer">
-        <button type="button" onClick={() => onNavigate('/account/password')}>账户安全</button>
-        <button type="button" onClick={() => onNavigate('/help')}>帮助</button>
+        <Button variant="ghost" size="sm" onClick={() => onNavigate('/account/password')}>{t('nav.accountSecurity')}</Button>
+        <Button variant="ghost" size="sm" onClick={() => onNavigate('/help')}>{t('nav.help')}</Button>
       </div>
     </aside>
     <div className="admin-main">
       <header className="admin-header">
-        <div className="breadcrumb">管理后台 <span>/</span> <strong>{title}</strong></div>
-        <div className="header-account"><span>{user.username}</span>
-          <button className="secondary" type="button" onClick={onLogout}>退出登录</button>
+        <div className="breadcrumb">{t('app.breadcrumb')} <span>/</span> <strong>{title}</strong></div>
+        <div className="header-account">
+          <PreferencesControls/>
+          <span className="account-name">{user.username}</span>
+          <Button variant="secondary" size="sm" onClick={onLogout}>{t('common.signOut')}</Button>
         </div>
       </header>
       <main className="content">
         <h1>{title}</h1>
-        {user.password_is_default && <div className="warning" role="alert">当前仍使用初始管理员密码，建议立即
-          <button className="inline-link" type="button" onClick={() => onNavigate('/account/password')}>修改密码</button>。
+        {user.password_is_default && <div className="warning" role="alert">
+          {t('auth.defaultPassword')}{' '}
+          <Button variant="ghost" size="sm" className="inline-link"
+            onClick={() => onNavigate('/account/password')}>{t('auth.changePassword')}</Button>
         </div>}
-        <div className={isSettings ? 'settings-grid' : ''}>
-          {isSettings && <nav className="settings-nav" aria-label="设置导航">
-            {secondary.filter(item => item.path.startsWith('/settings')).map(item =>
-              <button type="button" key={item.path} aria-current={pathname === item.path ? 'page' : undefined}
-                className={pathname === item.path ? 'active' : ''}
-                onClick={() => onNavigate(item.path)}>{item.label}</button>)}
-          </nav>}
+        {isSettings ? <div className="settings-grid">
+          <div className="settings-nav-mobile">
+            <SelectField label={t('nav.settings')} value={pathname}
+              options={[{ value: '/settings', label: t('nav.settings') },
+                ...secondary.map(item => ({ value: item.path, label: t(item.key) }))]}
+              onChange={event => onNavigate(event.target.value)}/>
+          </div>
+          <nav className="settings-nav" aria-label={t('nav.settings')}>
+            {secondary.map(item => <Button key={item.path} variant="ghost" size="sm"
+              aria-current={pathname === item.path ? 'page' : undefined}
+              className={pathname === item.path ? 'active' : ''}
+              onClick={() => onNavigate(item.path)}>{t(item.key)}</Button>)}
+          </nav>
           <div className="page-body">{children}</div>
-        </div>
+        </div> : <div className="page-body">{children}</div>}
       </main>
     </div>
   </div>;

@@ -45,3 +45,7 @@ JWT 暂存 sessionStorage（关闭标签页后清理），这是恢复过程中�
 ## 当前验证限制
 
 此轮在 GitHub 上直接提交代码，运行环境无法访问 GitHub/npm 依赖源，**尚未执行 npm install、npm run typecheck、npm run test、npm run build**。这四项属于继续实现前的必做验证，不能把已有测试文件当作已经测试通过。
+
+## W10 路由原型（2026-11-09）
+
+已支持原版路由路径识别、History API 前进/后退、受保护页登录跳转及安全回跳、公共 cashier 路由占位。Dashboard/Orders 仍是 JSON 预览，其他页面并未恢复。此原型并非完整版 TanStack Router。运行 npm install、npm run typecheck、npm run test、npm run build 后需记录真实结果，目前尚未运行成功；不涉及 src/www 和 Go 后端。

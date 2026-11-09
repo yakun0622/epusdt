@@ -1,17 +1,18 @@
 # web/ 前端恢复任务清单（第六轮）
 
-> **当前状态（2026-11-04）**：W11/W12/W13 已有首批代码提交，但依赖安装、TypeScript 编译和测试未执行，暂列“已编码、未验收”；W00 只完成源码基线核对，尚未完成本机完整构建。其他任务仍未实施。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
+> **当前状态（2026-11-04）**：W10/W11/W12/W13 已有首批代码提交，但依赖安装、TypeScript 编译和测试未执行，暂列“已编码、未验收”；W00 只完成源码基线核对，尚未完成本机完整构建。其他任务仍未实施。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
 
 ## 首批开发状态
 
 | 任务 | 当前状态 | 证明 |
 |---|---|---|
+| W10 | 已编码，未验收：浏览器 History 路由、受保护路由、登录回跳和测试原型；非完整 TanStack Router | web/src/app/routes.ts、use-browser-route.ts、routes.test.ts、main.tsx |
 | W00 | 部分完成（静态基线检查；缺实测） | web/package.json、tsconfig、vite.config.ts 与 W00-W13-IMPLEMENTATION-REPORT |
 | W11 | 已编码，未验收 | web/src/api/client.ts、api.ts、vite.config.ts |
 | W12 | 已编码，未验收 | web/src/api/types/*、api/endpoints/checkout.ts |
 | W13 | 已编码，未验收 | web/src/api/client.test.ts、api/types/payment.test.ts；尚未运行 Vitest |
 
-**不能把这些任务标为 Done**：仍需实际运行 npm install、typecheck、test、build，并检查浏览器中真实响应。下一步首先完成验证与必要修复，再进入 W10（路由系统）。
+**不能把这些任务标为 Done**：仍需实际运行 npm install、typecheck、test、build，并检查浏览器中真实响应。下一步应先运行构建及单测并修复问题，再深化 W20（认证）和 W21（布局）；当前 W10 仍是轻量路由第一批。
 
 ## M0｜基线和取证
 
@@ -97,4 +98,4 @@
 - 未通过项与回滚方式；
 - 明确声明是否动过 `src/www`、Go 和 CI。
 
-**下一轮最小可执行范围**：W00、W11、W12、W13。先改 API Client/契约和测试底座，再铺开路由与页面，避免旧 `web/src/api.ts` 临时类型侵入正式业务代码。
+**当前最新顺序**：优先实际运行 W10–W13 的 typecheck/test/build，再实现 W20/W21，未验收前不替换 src/www。

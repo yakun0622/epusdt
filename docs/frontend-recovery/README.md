@@ -2,7 +2,9 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 实际编码进度（2026-11-04）
+## 实际编码进度（更新于 2026-11-09）
+
+- [W10-ROUTING-IMPLEMENTATION.md](./W10-ROUTING-IMPLEMENTATION.md)：已编码的基础浏览器路由、公共支付隔离和登录回跳，尚未构建/测试验收。
 
 - [W00-W13-IMPLEMENTATION-REPORT.md](./W00-W13-IMPLEMENTATION-REPORT.md)：首次实现 admin/payment Client、Go DTO、时间单位校验和 Vitest tests。代码已提交但尚未安装依赖/运行 npm 命令；不是已通过验收。
 - [DEVELOPMENT-BACKLOG.md](./DEVELOPMENT-BACKLOG.md)：W00/W11/W12/W13 状态标注为部分或已编码未验收，其他仍待做。

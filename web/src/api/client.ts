@@ -35,7 +35,8 @@ export function createApiClient(config: ClientConfig) {
     let response: Response;
     try {
       response = await runFetch(config.basePath + path, { ...options, headers, redirect: 'follow' });
-    } catch {
+    } catch (cause) {
+      if ((cause as Error)?.name === 'AbortError') throw cause;
       throw new ApiError('网络连接失败，请检查后端服务', 0);
     }
     if (response.status === 401) config.onUnauthorized?.();
@@ -60,7 +61,7 @@ export function createApiClient(config: ClientConfig) {
   const postJson = <T>(path: string, body: unknown, method: 'POST'|'PUT'|'PATCH' = 'POST') =>
     json<T>(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-  /** CSV export intentionally bypasses the Go ApiEnvelope JSON parser. */
+  /** CSV export bypasses the Go ApiEnvelope JSON parser, but rejects HTML fallback. */
   const download = async (path: string): Promise<Blob> => {
     const response = await request(path, { headers: { Accept: 'text/csv' } });
     if (!response.ok) {
@@ -73,6 +74,9 @@ export function createApiClient(config: ClientConfig) {
       } catch { /* non-JSON error response */ }
       throw new ApiError(message, response.status, code);
     }
+    const contentType = response.headers.get('Content-Type') ?? '';
+    if (!contentType.toLowerCase().includes('text/csv'))
+      throw new ApiError('服务器未返回 CSV 文件', response.status);
     return response.blob();
   };
   return { json, postJson, download };

@@ -50,6 +50,6 @@ JWT 暂存 sessionStorage（关闭标签页后清理），这是恢复过程中�
 
 已支持原版路由路径识别、History API 前进/后退、受保护页登录跳转及安全回跳、公共 cashier 路由占位。Dashboard/Orders 仍是 JSON 预览，其他页面并未恢复。此原型并非完整版 TanStack Router。运行 npm install、npm run typecheck、npm run test、npm run build 后需记录真实结果，目前尚未运行成功；不涉及 src/www 和 Go 后端。
 
-## 手动 GitHub Actions 构建
+## GitHub Actions 编译（自动 + 手动）
 
-Actions → **Web build verification (manual)** → **Run workflow**。只支持手动触发，执行依赖安装、`npm run typecheck`、`npm run test`、`npm run build`，**不部署**；不触发 `src/www` 同步。详见 `docs/frontend-recovery/MANUAL-WEB-BUILD.md`。缺少 lockfile 时会提示不确定依赖版本并使用 `npm install`；首次成功运行后应补提交 `web/package-lock.json`。
+`master` 分支涉及 `web/**`（仅 lockfile 修改除外）或工作流文件修改的 push 自动触发 **Web build verification**；也可在 Actions 手动触发。执行 `npm ci`、类型检查、单测和 Vite 构建。缺少 lockfile 时先生成，**全部检查成功才把 `web/package-lock.json` 自动提交回 master**。仅构建 `web/dist`，不部署或覆盖 `src/www`。详见 `docs/frontend-recovery/MANUAL-WEB-BUILD.md`。

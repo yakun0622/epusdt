@@ -1,36 +1,38 @@
-# 手动 Web 编译验证工作流
+# Web 前端编译验证工作流（Push + Manual）
 
-> 对应 `.github/workflows/web-build-manual.yml`。**仅能通过 GitHub Actions 手动触发**，不配置 push、pull_request、schedule、tag 或 workflow_run 触发器。
+> 工作流文件：`.github/workflows/web-build-manual.yml`，沿用原文件路径。2026-11-10 更新触发规则；这份说明替代旧的“仅手动运行”说明。
 
-## 运行方式
+## 自动触发范围
 
-1. 打开仓库 `yakun0622/epusdt` → **Actions** → **Web build verification (manual)**。
-2. 点击 **Run workflow**，选择需要验证的分支（通常 `master`），再点击运行。
-3. 查看各步骤日志：依赖安装、TypeScript 类型检查、Vitest 单元测试、Vite 构建。
-4. 有失败时只修复代码并提交，不会自动重新运行；修好后需要再次手动触发。
+- `master` 分支发生包含 `web/**` 的 push 时运行；单独变更 `web/package-lock.json` 不触发（避免锁文件更新无意义重复验证）。
+- 修改 `.github/workflows/web-build-manual.yml` 时也触发。
+- 仍支持 Actions 页面 `Run workflow` → 选择分支 → 运行。
+- 其他分支的普通 push、文档和 Go 源码的独立修改、tag/release 均不触发本工作流。
+- 现有的 `sync-www.yml`、`release.yml`、`docker-alpine.yml` 均未改动；它们仍有各自触发机制。
 
-## 资源保护
+## 成功后自动更新 lock 文件
 
-- 单个 job，Ubuntu runner，超时 12 分钟；并发同一分支的新运行会取消旧运行。
-- 不执行 Go 后端测试；不构建 Docker；不发布制品；不上传 artifact；不提交/推送代码。
-- `web/dist` 仅存在于临时 runner，**绝不会同步到生产 `src/www`**。
-- `permissions: contents: read`，checkout 禁用凭证持久化，无额外 secrets。
+1. Checkout + Node.js 22（actions/checkout@v6、actions/setup-node@v6）。
+2. 如缺少 `web/package-lock.json`，先通过 `npm install --package-lock-only --ignore-scripts` 生成。
+3. 无论是否首次生成，都执行 `npm ci` 做严格依赖安装。
+4. 执行 `npm run typecheck`、`npm run test`、`npm run build`，并验证 `web/dist/index.html` 存在。
+5. **前述全部通过后**，且当前是 `master`，仅在 `web/package-lock.json` 发生变化时自动提交，并尝试快进推送到 `master`。
+6. Push 失败（例如分支保护或有并发提交）会使提交步骤失败，不做 force push；需要查看日志并处理权限/冲突。其他分支的手动运行只测试不推送。
 
-## package-lock 情况和下一步
+## 防循环和写入边界
 
-当前 `web/` 没有 `package-lock.json`；本轮尝试通过 npm registry 生成锁文件，失败：EAI_AGAIN（无法解析 registry.npmjs.org）。为了现在就能通过 GitHub Actions 手动验证，工作流优先 `npm ci`（存在锁文件时），无锁文件时降级为 `npm install` 并输出 warning。**该降级不保证依赖版本完全可复现。**
+- 锁文件机器人提交消息为 `chore(web): update npm dependency lockfile [skip ci]`。
+- GitHub 默认 `GITHUB_TOKEN` 提交不会再次触发同仓库的 push 工作流；另外 paths 规则忽略仅更新锁文件的提交。
+- Actions job 使用 `contents: write`，用于成功后的锁文件提交；不得上传秘钥、推送其他源码或同步 `src/www`。
+- 同一 ref 顺序执行（`cancel-in-progress: false`）；若其他进程抢先推进 master，则 fast-forward-only push 失败而不覆盖他人提交。
+- 仅构建 `web/dist`；不部署生产、无 Docker、无 Go 编译、无 CI 发布。
 
-首次手动运行成功后，应在能访问 npm registry 的环境下执行 `cd web && npm install --package-lock-only`，将生成的 `web/package-lock.json` 正式提交；此后工作流会自动选用 `npm ci`。不能把没有锁文件的首次运行视为可复现构建已完成。
+## 验收现状
 
-## 与现有 GitHub Actions 的关系
+- 已运行的前一版手动工作流 [Actions #1](https://github.com/yakun0622/epusdt/actions/runs/42653433274) 通过：TypeScript、3 文件/11 测试、Vite 编译；当时由于没有锁文件使用了 npm install。
+- 本次更新仅提交工作流配置，**新版本的 push 自动执行及锁文件自动提交需要以新运行记录为准**，不能把之前的成功当作新流程验收。
+- 如果仓库设置禁止 GitHub Actions 写入或启用了保护规则，成功构建后 lockfile push 仍可能被拒绝。
 
-这次只新增独立 Web 验证工作流。仓库已存在：
-- `sync-www.yml`：dev push / 手动触发，**可能更新 src/www**；
-- `release.yml`：v* tag push / 手动触发；
-- `docker-alpine.yml`：v* tag push。
+## 旧版手动工作流说明
 
-上面三个现有工作流**没有被此项改动禁用或修改**。因此“只手动触发”目前专指新建的 **Web build verification**。如果要将整个仓库所有编译/发布统一改成手动，需要对其余工作流另行调整触发条件。
-
-## 验收记录
-
-本次仅核对 YAML 定义和路径、提交到 GitHub。**尚未从 GitHub Actions 运行该工作流，也没有类型检查、测试或构建成功的证据**。首次执行应保存 workflow run 链接及日志，逐步修复失败项。
+旧说明已由本文件上述规则替代。最初的纯手动设计及首次缺少锁文件的背景详见 Git 提交历史。

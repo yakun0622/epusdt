@@ -1,49 +1,54 @@
-name: Web build verification (manual)
+name: Web build verification
 
-# Run only from Actions > Web build verification (manual) > Run workflow.
-# No push, pull_request, tag, schedule, workflow_run, or release triggers.
+# Validate frontend changes on master, or run manually from the Actions tab.
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'web/**'
+      - '!web/package-lock.json'
+      - '.github/workflows/web-build-manual.yml'
   workflow_dispatch:
 
+# The only write action is committing web/package-lock.json after all checks pass.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: manual-web-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: web-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   web-check:
     name: Typecheck, test and build web/
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     defaults:
       run:
-        working-directory: web
         shell: bash
+        working-directory: web
 
     steps:
       - name: Checkout selected ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
-      # web/package-lock.json has not been committed yet because the npm
-      # registry was inaccessible when this workflow was created.
-      # Prefer npm ci automatically after a lockfile is committed.
-      - name: Install dependencies
+      - name: Generate lockfile if missing
         run: |
-          if [[ -f package-lock.json ]]; then
-            npm ci --no-audit --no-fund
-          else
-            echo "::warning::web/package-lock.json is missing; falling back to npm install (not reproducible)."
-            npm install --no-audit --no-fund
+          if [[ ! -f package-lock.json ]]; then
+            echo 'Generating missing web/package-lock.json from package.json'
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           fi
+
+      - name: Reproducible dependency installation
+        run: npm ci --no-audit --no-fund
 
       - name: TypeScript typecheck
         run: npm run typecheck
@@ -51,11 +56,35 @@ jobs:
       - name: Unit tests
         run: npm run test
 
-      - name: Vite production build (web/dist only)
+      - name: Vite production build
         run: npm run build
 
-      - name: Report output without deployment
+      - name: Verify build output
         run: |
           test -f dist/index.html
-          echo "web/dist/index.html exists; no files were copied to src/www."
-          echo "No deployment, git commit, artifact upload or push is configured."
+          echo 'Build succeeded. Production src/www is unchanged.'
+
+      - name: Commit lockfile after successful checks
+        # Only master can receive an automated lockfile commit.
+        # A GITHUB_TOKEN push will not recursively trigger this workflow.
+        if: success() && github.ref == 'refs/heads/master'
+        working-directory: .
+        run: |
+          git add -- web/package-lock.json
+          if git diff --cached --quiet -- web/package-lock.json; then
+            echo 'web/package-lock.json is already committed and unchanged.'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(web): update npm dependency lockfile [skip ci]' -- web/package-lock.json
+          # Fast-forward-only: refuse to overwrite later commits.
+          git push origin HEAD:master
+
+      - name: Summary
+        if: success()
+        run: |
+          echo 'Web typecheck, tests and build passed.'
+          echo 'Only web/package-lock.json may be committed automatically.'
+          echo 'No deployment, no Docker build, no src/www synchronization.'

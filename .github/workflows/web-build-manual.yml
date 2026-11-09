@@ -1,0 +1,61 @@
+name: Web build verification (manual)
+
+# Run only from Actions > Web build verification (manual) > Run workflow.
+# No push, pull_request, tag, schedule, workflow_run, or release triggers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-web-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-check:
+    name: Typecheck, test and build web/
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: web
+        shell: bash
+
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # web/package-lock.json has not been committed yet because the npm
+      # registry was inaccessible when this workflow was created.
+      # Prefer npm ci automatically after a lockfile is committed.
+      - name: Install dependencies
+        run: |
+          if [[ -f package-lock.json ]]; then
+            npm ci --no-audit --no-fund
+          else
+            echo "::warning::web/package-lock.json is missing; falling back to npm install (not reproducible)."
+            npm install --no-audit --no-fund
+          fi
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Vite production build (web/dist only)
+        run: npm run build
+
+      - name: Report output without deployment
+        run: |
+          test -f dist/index.html
+          echo "web/dist/index.html exists; no files were copied to src/www."
+          echo "No deployment, git commit, artifact upload or push is configured."

@@ -6,3 +6,9 @@ src/*.db-shm
 src/*.db-wal
 .DS_Store
 .env
+
+# Reconstructed web frontend local artifacts
+web/node_modules/
+web/dist/
+web/coverage/
+web/.vite/

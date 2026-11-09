@@ -58,6 +58,8 @@ function App() {
 
   useEffect(() => {
     let alive = true;
+    // Public checkout/install/error routes must not validate admin JWT just because a cookie exists.
+    if (route.public && route.page !== 'sign-in') { setChecking(false); return; }
     if (!tokenPresent) { setProfile(null); setChecking(false); return; }
     setChecking(true);
     auth.me().then(value => { if (alive) setProfile(value); })
@@ -66,7 +68,7 @@ function App() {
         if (alive) { setProfile(null); setTokenPresent(false); }
       }).finally(() => { if (alive) setChecking(false); });
     return () => { alive = false; };
-  }, [tokenPresent]);
+  }, [tokenPresent, route.public, route.page]);
 
   useEffect(() => {
     if (!profile || route.public) return;
@@ -114,7 +116,8 @@ function App() {
   }
   const go = (to: string) => { setError(''); navigate(to); };
 
-  if (checking) return <main className="center"><LoadingState label={t('auth.checking')}/></main>;
+  if (checking && (!route.public || route.page === 'sign-in'))
+    return <main className="center"><LoadingState label={t('auth.checking')}/></main>;
   if (route.page === 'cashier')
     return <PublicPage title={t('checkout.title')}>
       <p>{t('checkout.order')}: {route.tradeId}</p>

@@ -22,7 +22,7 @@ export function AppearancePage() {
           {t('pages.toastDemo')}
         </Button>
       </div>
-      <DataTable rows={rows} getRowKey={row => row.id} emptyLabel={t('common.noData')}
+      <DataTable rows={rows} getRowKey={row => row.id} emptyLabel={t('common.noData')} ariaLabel={t('pages.uiDemo')}
         columns={[
           { key: 'name', title: t('pages.sampleName'), render: row => row.name },
           { key: 'status', title: t('pages.sampleStatus'),

@@ -6,17 +6,18 @@ export interface Column<T> {
   render: (row: T) => ReactNode;
   align?: 'left' | 'center' | 'right';
 }
-export function DataTable<T>({ columns, rows, getRowKey, emptyLabel, loading, loadingLabel }: {
+export function DataTable<T>({ columns, rows, getRowKey, emptyLabel, loading, loadingLabel, ariaLabel = 'Data table' }: {
   columns: ReadonlyArray<Column<T>>;
   rows: ReadonlyArray<T>;
   getRowKey: (row: T) => string | number;
   emptyLabel: string;
   loading?: boolean;
   loadingLabel?: string;
+  ariaLabel?: string;
 }) {
   if (loading) return <LoadingState label={loadingLabel ?? 'Loading…'}/>;
   if (rows.length === 0) return <EmptyState title={emptyLabel}/>;
-  return <div className="ui-table-scroll" role="region" aria-label="Data table" tabIndex={0}>
+  return <div className="ui-table-scroll" role="region" aria-label={ariaLabel} tabIndex={0}>
     <table className="ui-table">
       <thead><tr>{columns.map(column =>
         <th key={column.key} scope="col" style={{ textAlign: column.align ?? 'left' }}>{column.title}</th>)}</tr></thead>

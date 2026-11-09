@@ -10,7 +10,8 @@
     (function () {
       var cookie = document.cookie.split(';').map(function (x) { return x.trim(); })
         .find(function (x) { return x.indexOf('theme=') === 0; });
-      var saved = cookie ? decodeURIComponent(cookie.slice(6)) : 'system';
+      var saved = 'system';
+      try { saved = cookie ? decodeURIComponent(cookie.slice(6)) : 'system'; } catch (_) { saved = 'system'; }
       var theme = saved === 'dark' || saved === 'light' ? saved : 'system';
       var dark = theme === 'dark' || (theme === 'system' && window.matchMedia &&
         window.matchMedia('(prefers-color-scheme: dark)').matches);

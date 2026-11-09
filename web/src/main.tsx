@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, auth, ApiError, type Profile, session } from './api';
-import { navItems, safeRedirect, signInPath } from './app/routes';
+import { safeRedirect, signInPath } from './app/routes';
+import { AdminLayout } from './layouts/admin-layout';
+import { PasswordPage } from './features/auth/password-page';
 import { useBrowserRoute } from './app/use-browser-route';
 import './style.css';
 
@@ -16,6 +18,7 @@ const titles: Record<string, string> = {
 
 function App() {
   const [tokenPresent, setTokenPresent] = useState(Boolean(session.get()));
+  useEffect(() => session.subscribe(() => setTokenPresent(Boolean(session.get()))), []);
   const { route, location, navigate } = useBrowserRoute(tokenPresent);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [checking, setChecking] = useState(Boolean(session.get()));
@@ -122,7 +125,7 @@ function App() {
 
   if (route.page === 'sign-in' && !profile)
     return <main className="center"><form className="panel login" onSubmit={login}>
-      <h1>Epusdt 管理后台</h1><p className="muted">源码恢复工程 · 路由基础阶段</p>
+      <h1>Epusdt 管理后台</h1><p className="muted">源码恢复工程 · 管理后台</p>
       <label>用户名<input value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username"/></label>
       <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password"/></label>
       {error && <p role="alert" className="error">{error}</p>}
@@ -136,21 +139,17 @@ function App() {
   if (!profile) return <main className="center"><p>正在前往登录页…</p></main>;
 
   const section = route.page === 'dashboard' || route.page === 'orders';
-  return <div className="app"><aside><h2>Epusdt</h2><nav>
-    {navItems.map(item => <button key={item.path}
-      className={route.pathname === item.path || route.pathname.startsWith(item.path + '/') ? 'active' : ''}
-      onClick={() => go(item.path)}>{item.label}</button>)}
-  </nav></aside><main className="content"><header><h1>{titles[route.page] ?? '管理后台'}</h1>
-    <div>{profile.username} <button className="secondary" onClick={logout}>退出</button></div></header>
-    {profile.password_is_default && <p className="warning">当前使用初始管理员密码，请尽快修改。</p>}
+  return <AdminLayout pathname={route.pathname} title={titles[route.page] ?? '管理后台'}
+    user={profile} onNavigate={go} onLogout={logout}>
     {error && <p role="alert" className="error">{error}</p>}
-    {section ? (loadingData ? <p>加载中…</p> : <section className="panel">
-      <p className="muted">仅 API 联通性预览；真实业务页面待恢复。</p>
-      <pre>{JSON.stringify(result, null, 2)}</pre>
-    </section>) : <section className="panel">
-      <p className="muted">已建立原版路由路径与登录守卫。该业务页面尚未开发，未进行任何敏感操作。</p>
-    </section>}
-  </main></div>;
+    {route.page === 'account-password' ? <PasswordPage /> :
+      section ? (loadingData ? <p>加载中…</p> : <section className="panel">
+        <p className="muted">仅 API 联通性预览；真实业务页面待恢复。</p>
+        <pre>{JSON.stringify(result, null, 2)}</pre>
+      </section>) : <section className="panel">
+        <p className="muted">已建立原版路由路径与登录守卫。该业务页面尚未开发，未进行任何敏感操作。</p>
+      </section>}
+  </AdminLayout>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

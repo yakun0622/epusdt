@@ -1,1 +1,26 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Epusdt 管理后台（源码恢复）</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="color-scheme" content="light dark"/>
+  <title>GMPay Console</title>
+  <script>
+    // Apply the saved theme before CSS/React paint to avoid a dark-mode flash.
+    (function () {
+      var cookie = document.cookie.split(';').map(function (x) { return x.trim(); })
+        .find(function (x) { return x.indexOf('theme=') === 0; });
+      var saved = cookie ? decodeURIComponent(cookie.slice(6)) : 'system';
+      var theme = saved === 'dark' || saved === 'light' ? saved : 'system';
+      var dark = theme === 'dark' || (theme === 'system' && window.matchMedia &&
+        window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.mode = dark ? 'dark' : 'light';
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    })();
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

@@ -53,3 +53,7 @@ JWT 暂存 sessionStorage（关闭标签页后清理），这是恢复过程中�
 ## GitHub Actions 编译（自动 + 手动）
 
 `master` 分支涉及 `web/**`（仅 lockfile 修改除外）或工作流文件修改的 push 自动触发 **Web build verification**；也可在 Actions 手动触发。执行 `npm ci`、类型检查、单测和 Vite 构建。缺少 lockfile 时先生成，**全部检查成功才把 `web/package-lock.json` 自动提交回 master**。仅构建 `web/dist`，不部署或覆盖 `src/www`。详见 `docs/frontend-recovery/MANUAL-WEB-BUILD.md`。
+
+## W20/W21 第一阶段（2026-11-10）
+
+JWT 已从临时 sessionStorage 迁移为与原编译前端一致的 JSON Cookie `access_token`，增加实际修改密码表单和可复用后台导航/设置子导航；见 `docs/frontend-recovery/W20-W21-IMPLEMENTATION.md`。自动运行 [Actions #42655567335](https://github.com/yakun0622/epusdt/actions/runs/42655567335) 通过 TypeScript、13 项 Vitest、Vite 构建；浏览器和服务端联调仍待验收。

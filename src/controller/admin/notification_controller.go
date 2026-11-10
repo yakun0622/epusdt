@@ -51,7 +51,43 @@ func (c *BaseAdminController) ListNotificationChannels(ctx echo.Context) error {
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
+	if ctx.QueryParam("redact") == "1" {
+		// New admin UI never receives raw Config JSON: Telegram bot tokens
+		// and webhook header/secret values may be embedded in this field.
+		views := make([]notificationChannelSafeView, 0, len(rows))
+		for _, row := range rows {
+			views = append(views, newNotificationChannelSafeView(row))
+		}
+		ctx.Response().Header().Set("Cache-Control", "no-store")
+		return c.SucJson(ctx, views)
+	}
 	return c.SucJson(ctx, rows)
+}
+
+// notificationChannelSafeView is an explicit allowlist, never a spread of
+// the raw DB model. Existing compiled pages retain their legacy response.
+type notificationChannelSafeView struct {
+	ID uint64 `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
+	Enabled bool `json:"enabled"`
+	Configured bool `json:"configured"`
+	Events map[string]bool `json:"events"`
+}
+
+func newNotificationChannelSafeView(row mdb.NotificationChannel) notificationChannelSafeView {
+	events := make(map[string]bool)
+	var raw map[string]bool
+	if json.Unmarshal([]byte(row.Events), &raw) == nil {
+		for _, event := range []string{mdb.NotifyEventPaySuccess, mdb.NotifyEventOrderExpired, mdb.NotifyEventDailyReport} {
+			if raw[event] { events[event] = true } else { events[event] = false }
+		}
+	}
+	return notificationChannelSafeView{
+		ID: row.ID, Type: row.Type, Name: row.Name, Enabled: row.Enabled,
+		Configured: strings.TrimSpace(row.Config) != "",
+		Events: events,
+	}
 }
 
 // CreateNotificationChannel validates Config shape per type (only
@@ -101,6 +137,10 @@ func (c *BaseAdminController) CreateNotificationChannel(ctx echo.Context) error 
 	}
 	if strings.ToLower(strings.TrimSpace(row.Type)) == mdb.NotificationTypeTelegram {
 		telegram.ReloadBotAsync("admin create telegram channel")
+	}
+	if ctx.QueryParam("redact") == "1" {
+		ctx.Response().Header().Set("Cache-Control", "no-store")
+		return c.SucJson(ctx, newNotificationChannelSafeView(*row))
 	}
 	return c.SucJson(ctx, row)
 }

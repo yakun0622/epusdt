@@ -16,6 +16,7 @@ type CheckoutCounterResponse struct {
 	CreatedAt      int64   `json:"created_at" example:"1713264000"`                                                 // 订单创建时间 时间戳
 	ServerTime     int64   `json:"server_time" example:"1713264100"`                                                // 服务器当前时间 时间戳
 	IsSelected     bool    `json:"is_selected" example:"false"`                                                     // 是否已选择当前支付方式；status=4 占位订单和刚补全的占位父单为 false
+	CanSwitch      bool    `json:"can_switch" example:"true"`                                                      // 能否从此交易作为父单发起选择；子订单、已支付、已过期及 OkPay 订单返回 false。服务端最终再判断。
 }
 
 type CheckStatusResponse struct {

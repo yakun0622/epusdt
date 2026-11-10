@@ -590,6 +590,13 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 	if network == mdb.PaymentProviderOkPay {
 		return switchToOkPay(parent, token)
 	}
+	// OkPay records network=tron and receive_address=OKPAY for settlement,
+	// but they are not on-chain Tron wallets. In particular, the generic
+	// same-token/network fast path must never silently reuse an OkPay order
+	// as a chain payment, or treat OKPAY as a receiving address.
+	if parent.PayProvider == mdb.PaymentProviderOkPay {
+		return nil, constant.PaymentProviderNotSupport
+	}
 
 	if parent.Status == mdb.StatusWaitSelect {
 		return completeWaitSelectOrder(parent, token, network)
@@ -777,10 +784,22 @@ func buildCheckoutResponse(order *mdb.Orders) *response.CheckoutCounterResponse 
 		CreatedAt:      order.CreatedAt.TimestampMilli(),
 		ServerTime:     carbon.Now().TimestampMilli(),
 		IsSelected:     order.IsSelected,
+		CanSwitch:      order.ParentTradeId == "" && order.PayProvider != mdb.PaymentProviderOkPay &&
+			(order.Status == mdb.StatusWaitPay || order.Status == mdb.StatusWaitSelect),
 	}
 }
 
 func completeWaitSelectOkPayOrder(parent *mdb.Orders, token string) (*response.CheckoutCounterResponse, error) {
+	// A previous payLink call may have succeeded remotely but failed before
+	// local reconciliation. Never reset an existing provider record to
+	// "creating" and issue a second external purchase for a status=4 parent.
+	previous, err := data.GetProviderOrderByTradeIDAndProvider(parent.TradeId, mdb.PaymentProviderOkPay)
+	if err != nil {
+		return nil, err
+	}
+	if previous.ID > 0 {
+		return nil, constant.OrderStatusConflict
+	}
 	rate := config.GetRateForCoin(strings.ToLower(token), strings.ToLower(parent.Currency))
 	if rate <= 0 {
 		return nil, constant.RateAmountErr
@@ -811,9 +830,11 @@ func completeWaitSelectOkPayOrder(parent *mdb.Orders, token string) (*response.C
 		Status:          mdb.ProviderOrderStatusCreating,
 		NotifyRaw:       "",
 	}
-	if err := data.UpsertProviderOrderCreatingWithTransaction(tx, providerRow); err != nil {
+	// Unique (trade_id, provider) insertion is a cross-process safety net.
+	// Do not upsert and reset a row left by an uncertain provider request.
+	if err := data.CreateProviderOrderWithTransaction(tx, providerRow); err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, constant.OrderStatusConflict
 	}
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()

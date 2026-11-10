@@ -6,7 +6,7 @@ export interface CheckoutView {
   tradeId:string; amount:number; actualAmount:number; token:string; currency:string;
   receiveAddress:string; network:string; paymentType:'gmpay'|'epay';
   statusAtCreation:OrderStatus; createdAt:UnixMilliseconds; expirationTime:UnixMilliseconds;
-  serverTime:UnixMilliseconds; isSelected:boolean; hasHostedPaymentLink:boolean;
+  serverTime:UnixMilliseconds; isSelected:boolean; canSwitch:boolean; hasHostedPaymentLink:boolean;
 }
 export interface CheckoutStatusView { tradeId:string; status:OrderStatus }
 export type CheckoutVerification =
@@ -45,6 +45,8 @@ export function decodePublicCheckout(raw:unknown,expected:string):CheckoutView {
   if(paymentType!=='gmpay'&&paymentType!=='epay')
     throw new TypeError('Unsupported payment type');
   if(typeof row.is_selected!=='boolean')throw new TypeError('Invalid selected flag');
+  if(row.can_switch!==undefined&&typeof row.can_switch!=='boolean')
+    throw new TypeError('Invalid switch capability');
   const createdAt=parseUnixMilliseconds(row.created_at as number);
   const expirationTime=parseUnixMilliseconds(row.expiration_time as number);
   const serverTime=parseUnixMilliseconds(row.server_time as number);
@@ -56,7 +58,7 @@ export function decodePublicCheckout(raw:unknown,expected:string):CheckoutView {
     currency,token:field(row,'token'),network:field(row,'network'),
     receiveAddress:field(row,'receive_address'),
     paymentType,statusAtCreation:status(row),createdAt,expirationTime,serverTime,
-    isSelected:row.is_selected,hasHostedPaymentLink:
+    isSelected:row.is_selected,canSwitch:row.can_switch===true,hasHostedPaymentLink:
       typeof row.payment_url==='string'&&row.payment_url.length>0};
 }
 export function decodePublicStatus(raw:unknown,expected:string):CheckoutStatusView {
@@ -77,9 +79,13 @@ export function verifyCheckout(
   if(serverNow>=checkout.expirationTime)return {kind:'expired'};
   if(latest.status===4)return {kind:'choose'};
   if(checkout.statusAtCreation!==1)return {kind:'awaiting-details'};
+  // OkPay stores network=tron and receive_address=OKPAY. The provider
+  // hosted link takes precedence over any on-chain looking fields.
+  if(checkout.hasHostedPaymentLink)return {kind:'payment',payment:'hosted',address:null};
+  if(checkout.receiveAddress.trim().toUpperCase()==='OKPAY')
+    return {kind:'awaiting-details'};
   if(checkout.token.trim()&&checkout.network.trim()&&checkout.receiveAddress.trim()&&checkout.actualAmount>0)
     return {kind:'payment',payment:'onchain',address:checkout.receiveAddress};
-  if(checkout.hasHostedPaymentLink)return {kind:'payment',payment:'hosted',address:null};
   return {kind:'awaiting-details'};
 }
 export const checkoutApi={

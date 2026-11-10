@@ -1,0 +1,59 @@
+name: Cleanup merged feature branches
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'master' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'feat/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete only the merged same-repository feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in
+            feat/*) ;;
+            *) echo "Refusing non-feature branch"; exit 1 ;;
+          esac
+          if gh api "repos/$REPO/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
+            gh api --silent -X DELETE "repos/$REPO/git/refs/heads/$BRANCH"
+            echo "Removed merged feature branch"
+          else
+            echo "Feature branch already removed"
+          fi
+
+      - name: Remove leftover merged W44 and W50 branches once
+        if: github.event.pull_request.head.ref == 'feat/w51-payment-method-selection'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for spec in '1 feat/w44-auxiliary-pages' '2 feat/w50-public-checkout'; do
+            read -r pr branch <<< "$spec"
+            merged="$(gh api "repos/$REPO/pulls/$pr" --jq '.merged')"
+            base="$(gh api "repos/$REPO/pulls/$pr" --jq '.base.ref')"
+            head="$(gh api "repos/$REPO/pulls/$pr" --jq '.head.ref')"
+            source="$(gh api "repos/$REPO/pulls/$pr" --jq '.head.repo.full_name')"
+            if [[ "$merged" == "true" && "$base" == "master" && "$head" == "$branch" && "$source" == "$REPO" ]]; then
+              if gh api "repos/$REPO/git/ref/heads/$branch" >/dev/null 2>&1; then
+                gh api --silent -X DELETE "repos/$REPO/git/refs/heads/$branch"
+                echo "Removed previously merged branch $branch"
+              fi
+            else
+              echo "Skipping historical branch: merge identity did not match"
+            fi
+          done

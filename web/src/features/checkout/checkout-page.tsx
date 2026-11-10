@@ -1,6 +1,8 @@
 import {useCallback,useEffect,useMemo,useState} from 'react';
 import {checkoutApi,validTradeId,verifyCheckout,type CheckoutView,type CheckoutStatusView} from '../../api/endpoints/checkout';
 import {Button} from '../../components/ui';
+import {PaymentSelector,switchMessageKey} from './payment-selector';
+import type {SwitchProblem} from '../../api/endpoints/payment-switch';
 import {useI18n} from '../../i18n/i18n-provider';
 import {checkoutLabel,type CheckoutKey} from './i18n';
 
@@ -11,7 +13,7 @@ function formatDate(millis:number,locale:string):string {
 function formatNumber(value:number,locale:string,precision=8):string {
   return new Intl.NumberFormat(locale,{maximumFractionDigits:precision,useGrouping:false}).format(value);
 }
-export function CheckoutPage({tradeId}:{tradeId:string}) {
+export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(path:string)=>void}) {
   const {locale}=useI18n();
   const t=useCallback((key:CheckoutKey)=>checkoutLabel(locale,key),[locale]);
   const [snapshot,setSnapshot]=useState<Loaded|null>(null);
@@ -19,6 +21,9 @@ export function CheckoutPage({tradeId}:{tradeId:string}) {
   const [error,setError]=useState('');
   const [revision,setRevision]=useState(0);
   const [clock,setClock]=useState(0);
+  const [switching,setSwitching]=useState(false);
+  const [switchProblem,setSwitchProblem]=useState<SwitchProblem|null>(null);
+  const [uncertain,setUncertain]=useState(false);
 
   useEffect(()=>{
     if(!validTradeId(tradeId)){
@@ -37,10 +42,10 @@ export function CheckoutPage({tradeId}:{tradeId:string}) {
     return()=>{active=false;abort.abort();};
   },[tradeId,revision,t]);
   useEffect(()=>{
-    if(!snapshot||snapshot.status.status===2||snapshot.status.status===3)return;
+    if(!snapshot||switching||snapshot.status.status===2||snapshot.status.status===3)return;
     const id=window.setInterval(()=>setRevision(v=>v+1),15000);
     return()=>window.clearInterval(id);
-  },[snapshot]);
+  },[snapshot,switching]);
   useEffect(()=>{
     if(!snapshot)return;
     const id=window.setInterval(()=>setClock(v=>v+1),1000);
@@ -57,7 +62,13 @@ export function CheckoutPage({tradeId}:{tradeId:string}) {
     Math.max(0,Math.ceil((checkout.expirationTime-serverNow)/1000)):0;
   // Explicitly use the live tick, even when no clock label is visible.
   void clock;
-  const onchain=view.kind==='payment'&&view.payment==='onchain'&&checkout;
+  // Hide the old address immediately when a switch preflight begins.
+  const onchain=!switching&&view.kind==='payment'&&view.payment==='onchain'&&checkout;
+  const canChoose=Boolean(checkout&&snapshot&&serverNow!==null&&
+    !error&&!loading&&(view.kind==='choose'||view.kind==='payment')&&
+    checkout.canSwitch&& !checkout.hasHostedPaymentLink&&
+    checkout.receiveAddress.trim().toUpperCase()!=='OKPAY'&&
+    serverNow<checkout.expirationTime);
   const statusLabel=useMemo(()=>{
     switch(view.kind){
       case 'paid':return t('paid');
@@ -68,10 +79,22 @@ export function CheckoutPage({tradeId}:{tradeId:string}) {
       default:return t('statusUnknown');
     }
   },[view.kind,t]);
+  const onSwitchResolved=(newId:string)=>{
+    setSwitching(false);setSwitchProblem(null);
+    if(newId!==tradeId&&onNavigate)onNavigate('/cashier/'+encodeURIComponent(newId));
+    else setRevision(v=>v+1);
+  };
+  const onSwitchFailure=(problem:SwitchProblem)=>{
+    setSwitching(false);setSwitchProblem(problem);
+    // An unknown/provider result can already have committed an order.
+    // Prevent another POST until someone reconciles it externally.
+    if(problem==='unknown'||problem==='provider')setUncertain(true);
+    setRevision(v=>v+1);
+  };
   return <section className="checkout-page" aria-label={t('title')}>
     <div className="checkout-header">
       <div><h2>{t('title')}</h2><p className="muted">{t('order')}: <code>{tradeId}</code></p></div>
-      <Button type="button" variant="secondary" disabled={loading||!validTradeId(tradeId)}
+      <Button type="button" variant="secondary" disabled={loading||switching||!validTradeId(tradeId)}
         onClick={()=>setRevision(v=>v+1)}>{t('refresh')}</Button>
     </div>
     {loading?<p className="muted" role="status">{t('loading')}</p>:
@@ -79,7 +102,9 @@ export function CheckoutPage({tradeId}:{tradeId:string}) {
         <p>{error}</p><p className="muted">{t('stale')}</p>
         <Button onClick={()=>setRevision(v=>v+1)}>{t('retry')}</Button>
       </div>:checkout?<div>
-        <div className={'checkout-state checkout-state--'+view.kind} role="status">{statusLabel}</div>
+        <div className={'checkout-state checkout-state--'+view.kind} role="status">{switching?t('selecting'):statusLabel}</div>
+        {switchProblem&&<p role="alert" className="checkout-alert">{t(switchMessageKey(switchProblem))}</p>}
+        {uncertain&&<p role="alert" className="warning">{t('selectBlocked')}</p>}
         <dl className="checkout-fields">
           <div><dt>{t('amount')}</dt>
             <dd>{formatNumber(checkout.amount,locale,8)} {checkout.currency}</dd></div>
@@ -100,14 +125,19 @@ export function CheckoutPage({tradeId}:{tradeId:string}) {
           {!checkout.isSelected&&<p className="warning" role="note">{t('notSelected')}</p>}
           <p className="muted">{t('readOnly')}</p>
         </div>}
-        {view.kind==='payment'&&view.payment==='hosted'&&
+        {!switching&&view.kind==='payment'&&view.payment==='hosted'&&
           <div role="note" className="checkout-alert">
             <strong>{t('hosted')}</strong><p>{t('hostedHint')}</p>
           </div>}
         {view.kind==='choose'&&<p className="checkout-alert">{t('chooseHint')}</p>}
         {view.kind==='awaiting-details'&&
           <p className="checkout-alert" role="note">{t('paymentUnavailable')}</p>}
-        {view.kind==='payment'&&<p className="muted">{t('noAuto')}</p>}
+        {view.kind==='payment'&&!switching&&<p className="muted">{t('noAuto')}</p>}
+        {canChoose&&snapshot&&serverNow!==null&&<PaymentSelector
+          initial={{checkout:snapshot.checkout,status:snapshot.status}}
+          serverNow={serverNow} disabled={uncertain} busy={switching}
+          onBegin={()=>{setSwitching(true);setSwitchProblem(null);}}
+          onResolved={onSwitchResolved} onFailure={onSwitchFailure}/>}
       </div>:<p role="alert">{t('offline')}</p>}
     <p className="muted checkout-boundary">{t('noWrites')}</p>
   </section>;

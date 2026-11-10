@@ -149,7 +149,7 @@ export function reconcileSettingsWrite(requested: readonly SettingWrite[], paylo
   return {
     rows, successCount: rows.filter(row => row.ok).length,
     failureCount: failures.length, failedKeys: requested.map(item => item.key)
-      .filter((key, i) => !rows[i]?.ok), allSucceeded: failures.length === 0 && rows.length === requested.length,
+      .filter((_, i) => !rows[i]?.ok), allSucceeded: failures.length === 0 && rows.length === requested.length,
   };
 }
 export const settingsApi = {

@@ -26,3 +26,13 @@ func TestRPCCredentialPatchKeepsLegacyEmptyFormSafe(t *testing.T) {
     t.Fatalf("contradictory replace+clear request must be rejected")
   }
 }
+
+func TestRPCEndpointForConsoleRedactsURLSecrets(t *testing.T) {
+  endpoint := rpcEndpointForConsole("https://user:password@rpc.example:8443/path/API_SECRET?api_key=QUERY_SECRET#hash")
+  if endpoint != "https://rpc.example:8443" {
+    t.Fatalf("unsafe or incorrect endpoint display")
+  }
+  if rpcEndpointForConsole("garbled URL") != "[hidden endpoint]" {
+    t.Fatalf("malformed endpoint should not be echoed")
+  }
+}

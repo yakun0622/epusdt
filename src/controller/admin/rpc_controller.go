@@ -52,7 +52,38 @@ func (c *BaseAdminController) ListRpcNodes(ctx echo.Context) error {
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
+	if ctx.QueryParam("redact") == "1" {
+		// New console opts into credential-safe RPC DTOs. The legacy SPA keeps
+		// its original URL field until the production frontend is replaced.
+		result := make([]map[string]interface{}, 0, len(rows))
+		for _, row := range rows {
+			result = append(result, map[string]interface{}{
+				"id": row.ID,
+				"network": row.Network,
+				"url": rpcEndpointForConsole(row.Url),
+				"type": row.Type,
+				"weight": row.Weight,
+				"enabled": row.Enabled,
+				"purpose": row.Purpose,
+				"status": row.Status,
+				"last_latency_ms": row.LastLatencyMs,
+				"last_checked_at": row.LastCheckedAt,
+			})
+		}
+		return c.SucJson(ctx, result)
+	}
 	return c.SucJson(ctx, rows)
+}
+
+// rpcEndpointForConsole only returns the scheme and host (including port).
+// RPC URL paths/query/userinfo may contain secret tokens and must not appear
+// in the new console's list response.
+func rpcEndpointForConsole(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+		return "[hidden endpoint]"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // CreateRpcNode inserts a row. Status starts as "unknown" until the

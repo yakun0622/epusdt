@@ -4,6 +4,7 @@ import { settingsApi, settingsForPage, sensitiveKeys, validateSetting,
 import { Button, Card, SelectField, TextField, useToast } from '../../components/ui';
 import { useI18n } from '../../i18n/i18n-provider';
 import { opsLabel, settingFieldLabel, type OperationsKey } from './i18n';
+import { RateCachePanel } from './rate-cache-panel';
 
 interface SettingsPageProps {
   section: Section;
@@ -208,5 +209,6 @@ export function SettingsPage({ section, onNavigate }: SettingsPageProps) {
           <p className="muted">{t('reenterSecret')}</p>}
       </div>}
     </Card>
+    {section==='pay'&&<RateCachePanel/>}
   </div>;
 }

@@ -13,6 +13,7 @@ import { ChainsPage } from './features/networks/chains-page';
 import { RpcPage } from './features/networks/rpc-page';
 import { SettingsPage } from './features/operations/settings-page';
 import { DashboardPage } from './features/operations/dashboard-page';
+import { CheckoutPage } from './features/checkout/checkout-page';
 import { NotificationsPage } from './features/auxiliary/notifications-page';
 import { DisplayPage, IntegrationsPage, HelpPage, InstallGuide } from './features/auxiliary/info-pages';
 import type { SettingsPage as SettingsSection } from './api/endpoints/settings';
@@ -109,8 +110,7 @@ function App() {
     return <main className="center"><LoadingState label={t('auth.checking')}/></main>;
   if (route.page === 'cashier')
     return <PublicPage title={t('checkout.title')}>
-      <p>{t('checkout.order')}: {route.tradeId}</p>
-      <p className="muted">{t('checkout.notReady')}</p>
+      <CheckoutPage tradeId={route.tradeId ?? ''}/>
     </PublicPage>;
   if (route.page === 'install')
     return <PublicPage title={t('pages.install')}><InstallGuide onNavigate={navigate}/></PublicPage>;

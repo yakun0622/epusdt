@@ -2,6 +2,16 @@
 
 > **当前状态（2026-11-10）**：W10～W16 的首轮代码、W20/W21 基础布局已落地，相关 Actions 编译及单元测试通过；浏览器对照/真实支付仍未完成，不能等同业务端到端验收。W14/W15/W16 详见本次交付记录。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
 
+## 2026-11-10：W42/W43 五类设置与真实 Dashboard 已实现
+
+- W42：`/settings/{system,telegram,pay,epay,okpay}` 五类页面，依据真实 Go setting type 构建表单，只保存修改项；Telegram/OkPay 凭证不回显、写后清空；HTTP 200 per-key 失败/错位/缺失明确报告；Pay 汇率缓存状态及需确认的手动刷新，按基准币种展示部分失败。
+- 服务端 `?redact=1` 控制设置 URL 和汇率 API URL/错误详情脱敏；Go 列表过滤敏感 token，更新失败的 Telegram 配置不会触发 Bot reload。老编译前端仍保留兼容读取路径。
+- W43：`/dashboard` 改为真实概览、订单统计、日/小时订单数趋势以及可认证读取的 RPC 进程快照。成功率 0–1 → 百分比，平均付款耗时单位秒，无样本显示未知。跨币种 `actual_amount` 不能作为“统一收入”，故不展示误导性金额 KPI。
+- 修复 Go MySQL 5.7 `DATE_FORMAT` 日/小时聚合和 Dashboard SQL 错误被忽略的问题，防止查询失败被误报为零。
+- Web [Actions #42792271770](https://github.com/yakun0622/epusdt/actions/runs/42792271770) 已通过 28 文件/80 测试、TS/Vite。Go 专项测试见 `dashboard-settings-security.yml`。
+- 未执行实际浏览器/数据库/支付链路联调。**W31 不实施**，生产 `src/www` 保持原样。
+- 下一轮 **W44**：外观以外的 Display/Notifications/Integrations/Help/Install 辅助页面，先确认真实 API 及只读安全边界，再推进 W50 收银台。
+
 ## 2026-11-10：W40/W41 Chain、Token、RPC 管理已实现
 
 - **W40**：`/chains` 真实网络列表和更新（仅 `GET /chains`、`PATCH /chains/:network`；Go **没有**链的创建或删除接口），编辑名称/确认数/扫描周期和布尔启停；按网络过滤 ChainTokens，支持新增、编辑、`POST /chain-tokens/:id/status` 布尔开关、需输入币种符号确认的软删除。Aptos 启用代币必须填写 Move 资产 ID。
@@ -155,4 +165,4 @@
 - 未通过项与回滚方式；
 - 明确声明是否动过 `src/www`、Go 和 CI。
 
-**当前最新顺序**：W42/W43 真实系统设置与仪表盘 → W44 辅助页面 → W50+ 公共收银台测试态恢复 → W60+ 浏览器/安全/发布回归。W31 资金相关订单操作仍须独立高风险验收；未通过浏览器及支付链路回归前禁止替换 src/www。
+**当前最新顺序**：W44 辅助页面（保留只读/演示边界）→ W50～W55 公共收银台真实支付状态恢复 → W60～W63 浏览器、安全和发布回归。W31 资金相关订单操作仍须独立高风险验收；未通过浏览器及支付链路回归前禁止替换 src/www。

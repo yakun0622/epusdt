@@ -2,7 +2,14 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W40/W41 Chains、Token 和 RPC（2026-11-10）
+## 当前最新交付：W42/W43 配置与 Dashboard（2026-11-10）
+
+- [W42-W43-IMPLEMENTATION.md](./W42-W43-IMPLEMENTATION.md)：系统/Telegram/Pay/EPAY/OkPay 配置、部分成功逐项反馈、汇率刷新、真实订单和 RPC 指标、安全脱敏及 MySQL 5.7 修复。
+- [Web Actions #42792271770](https://github.com/yakun0622/epusdt/actions/runs/42792271770)：28 文件/80 项测试、TypeScript 与 Vite 构建通过。
+- [Go 配置安全专项工作流](https://github.com/yakun0622/epusdt/actions/workflows/dashboard-settings-security.yml)：Token 与 URL 脱敏、趋势分组与路由编译验证。
+- 下一阶段 W44 辅助页面；**W31 订单资金操作不实施**，生产 `src/www` 未替换。
+
+## 历史交付：W40/W41 Chains、Token 和 RPC（2026-11-10）
 
 - [W40-W41-IMPLEMENTATION.md](./W40-W41-IMPLEMENTATION.md)：网络与 Token 管理、RPC 健康检查/重试、服务端凭证与 URL 脱敏、原编译页面的空凭证兼容。
 - [前端 Actions #42781772440](https://github.com/yakun0622/epusdt/actions/runs/42781772440)：TypeScript、22 文件/63 测试、Vite Build 成功。

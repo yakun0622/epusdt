@@ -28,14 +28,16 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - W33/W34：`/addresses` 已接入真实钱包列表、网络/status/关键词筛选、新增、备注更新、状态启停、需键入地址确认的软删除、批量导入及 **HTTP 200 内逐项失败**展示/失败项重试。无私钥导入。
 - W35：`/keys` API Key 列表、创建/编辑/启停/使用统计/显式密钥查看/轮换/删除；敏感值临时遮蔽展示，后台 secret 响应禁缓存头，包含风险确认。
 - W40/W41：`/chains` 网络与 ChainToken 的列表/编辑/启停、Token 新增/删除；`/rpc` 节点列表/新增/编辑/启停/删除/健康检查，RPC 新列表服务端 URL 脱敏，凭证不显示/不存浏览器存储。
+- W42：五种配置页面及 `rate/status` 缓存状态与确认式手动刷新；批量 PUT 逐项结果、凭证隐藏、URL 脱敏、错误重试。
+- W43：`/dashboard` 实际概览、订单统计/日小时趋势、RPC 进程快照，禁用虚假 KPI 和跨币种收入汇总展示。
 
-当前 Dashboard 仍是 **只读 JSON API 预览**，`/orders` 已变为只读表格/筛选/详情/CSV，`/addresses` 已恢复钱包管理。配置、仪表盘等其他后台业务页、完整支付流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
+当前 Dashboard 已使用真实 Go 接口展示订单/RPC 指标；`/orders` 是只读订单表格/CSV，`/addresses` 已恢复钱包管理，System/Telegram/Pay/EPAY/OkPay 配置页已接入。其余辅助后台模块、完整支付流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
 
 ## Actions 编译
 
 `master` 的 `web/**` 变更（仅 lockfile 除外）自动触发 `Web build verification`；也支持手动触发。流程执行 `npm ci`、`typecheck`、Vitest、Vite build；全部通过后才可能更新 `web/package-lock.json`。**不会部署或覆盖 `src/www`**。
 
-最新验证：[Actions #42781772440](https://github.com/yakun0622/epusdt/actions/runs/42781772440)，TypeScript 成功、22 测试文件/63 用例通过、Vite 构建成功。另有 Go RPC 安全专项工作流。浏览器端 E2E 尚未执行。
+最新验证：[Actions #42792271770](https://github.com/yakun0622/epusdt/actions/runs/42792271770)：TypeScript、28 个测试文件/80 项用例、Vite 构建通过；另有 Go Dashboard/Settings 安全专项工作流。浏览器端 E2E 尚未执行。
 
 ## 文档和后续
 
@@ -44,7 +46,7 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - 当前任务：`docs/frontend-recovery/DEVELOPMENT-BACKLOG.md`
 - W14/W15/W16 交付报告：`docs/frontend-recovery/W14-W16-IMPLEMENTATION.md`
 
-**下一步建议 W42/W43**：恢复 System/Telegram/Pay/EPay/OkPay 设置与仪表盘真实数据展示，保护设置中的敏感凭据；W31 订单关闭、标记支付和回调重发仍须独立安全验收。
+**下一步建议 W44**：Display、Notifications、Integrations、Help、Install 辅助页面，以真实 API 能力为准且默认只读；W31 订单关闭、人工补单和回调重发仍须独立安全验收。
 
 ## 安全边界
 
@@ -65,3 +67,7 @@ JWT 存储为浏览器可读 Cookie，是原版行为，不提供 HttpOnly 保�
 ## W40/W41 网络与 RPC 交付
 
 实现记录：`docs/frontend-recovery/W40-W41-IMPLEMENTATION.md`。RPC 服务器列表 `?redact=1` 隐藏凭证和 URL 的路径/查询参数；Go 的 `api_key` JSON 字段不再输出，旧编译页面编辑空密钥默认保留原值。原版浏览器及测试后端联调尚待完成。
+
+## W42/W43 设置与 Dashboard 交付
+
+详见 `docs/frontend-recovery/W42-W43-IMPLEMENTATION.md`。五类配置、按键部分失败反馈、敏感字段和 URL 脱敏、真实订单/RPC 指标以及 MySQL 5.7 聚合兼容。W31 与生产 `src/www` 未修改，实际浏览器/数据库/支付联调仍是发布门槛。

@@ -95,6 +95,36 @@ func (c *BaseCommController) CheckoutReconciliation(ctx echo.Context) error {
 	return c.SucJson(ctx,resp)
 }
 
+// VerifyTxHash verifies chain evidence without settling an order.
+// This endpoint is intentionally separate from /pay/submit-tx-hash: a
+// successful verification is NOT a payment or callback.
+// @Summary      Verify public cashier chain transaction without settlement
+// @Description  Only a still-pending, consistent on-chain order can be checked. The transaction is verified against the server-side network, token contract, recipient, amount, confirmations and creation time. No order or provider status is mutated.
+// @Tags         Payment
+// @Accept       json
+// @Produce      json
+// @Param        trade_id path string true "Trade ID"
+// @Param        request body request.ManualPaymentRequest true "Transaction identifier"
+// @Success      200 {object} response.ApiResponse{data=response.CashierTxVerificationResponse}
+// @Failure      400 {object} response.ApiResponse "10007 already processed, 10008 missing, 10009 invalid, 10010 status conflict, 10013 not awaiting, 10038 chain verification failed, 10039 hosted provider unsupported"
+// @Router       /pay/verify-tx-hash/{trade_id} [post]
+func (c *BaseCommController) VerifyTxHash(ctx echo.Context) error {
+	ctx.Response().Header().Set("Cache-Control", "no-store")
+	req := new(request.ManualPaymentRequest)
+	if err := ctx.Bind(req); err != nil {
+		return c.FailJson(ctx, constant.ParamsMarshalErr)
+	}
+	req.BlockTransactionId = strings.TrimSpace(req.BlockTransactionId)
+	if err := c.ValidateStruct(ctx, req); err != nil {
+		return c.FailJson(ctx, err)
+	}
+	result, err := service.VerifyCashierTxHash(ctx.Param("trade_id"), req.BlockTransactionId)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	return c.SucJson(ctx, result)
+}
+
 // SubmitTxHash 手动提交交易 hash 补单
 // @Summary      Submit transaction hash
 // @Description  Submit an on-chain transaction hash from the cashier. The hash is verified against the waiting order and, when valid, the same manual payment processing path used by admin mark-paid is executed. Expired orders and OkPay/provider orders are not supported.

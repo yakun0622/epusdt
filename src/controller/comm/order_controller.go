@@ -1,7 +1,6 @@
 package comm
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -90,13 +89,8 @@ func (c *BaseCommController) SwitchNetwork(ctx echo.Context) (err error) {
 		return c.FailJson(ctx, err)
 	}
 
-	jsonBytes, err := json.MarshalIndent(resp, "", "  ")
-	if err != nil {
-		return c.FailJson(ctx, constant.SystemErr)
-	}
-
-	log.Sugar.Debugf("switch network response: \n%s", string(jsonBytes))
-
+	// Never log the full switch response: OkPay payment_url may carry
+	// provider tokens, and on-chain responses contain receiving addresses.
 	return c.SucJson(ctx, resp)
 }
 

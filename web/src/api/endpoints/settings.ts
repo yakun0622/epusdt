@@ -165,3 +165,65 @@ export const settingsApi = {
     return reconcileSettingsWrite(items, raw);
   },
 };
+
+export interface RateBaseState {
+  base: string;
+  rates: Record<string,number>;
+  is_stale: boolean;
+  last_refresh_ok: boolean;
+  last_success_at: string;
+  last_attempt_at: string;
+}
+export interface RateStatus {
+  mode: 'auto'|'fixed';
+  cache_ttl_seconds: number;
+  bases: RateBaseState[];
+}
+export interface RateRefreshRow {
+  base: string;
+  ok: boolean;
+  skipped: boolean;
+  rates: Record<string,number>;
+}
+function redactRates(value:unknown):Record<string,number> {
+  if(!value||typeof value!=='object'||Array.isArray(value))return {};
+  const out:Record<string,number>={};
+  for(const [key,n] of Object.entries(value)) {
+    if(/^[a-zA-Z0-9_-]{1,16}$/.test(key)&&typeof n==='number'&&Number.isFinite(n)&&n>=0)
+      out[key]=n;
+  }
+  return out;
+}
+export function decodeRateStatus(value:unknown):RateStatus {
+  if(!value||typeof value!=='object')throw new TypeError('Invalid rate status');
+  const x=value as Record<string,unknown>;
+  if((x.mode!=='auto'&&x.mode!=='fixed')||!Number.isInteger(x.cache_ttl_seconds)||!Array.isArray(x.bases))
+    throw new TypeError('Invalid rate status');
+  const bases:RateBaseState[]=x.bases.map((raw:unknown)=>{
+    if(!raw||typeof raw!=='object')throw new TypeError('Invalid rate base');
+    const r=raw as Record<string,unknown>;
+    if(typeof r.base!=='string'||typeof r.is_stale!=='boolean'||typeof r.last_refresh_ok!=='boolean')
+      throw new TypeError('Invalid rate base');
+    // No API URL, source URL or last_error is copied: they may contain credentials.
+    return {base:r.base,rates:redactRates(r.rates),is_stale:r.is_stale,
+      last_refresh_ok:r.last_refresh_ok,
+      last_success_at:typeof r.last_success_at==='string'?r.last_success_at:'',
+      last_attempt_at:typeof r.last_attempt_at==='string'?r.last_attempt_at:''};
+  });
+  return {mode:x.mode,cache_ttl_seconds:x.cache_ttl_seconds as number,bases};
+}
+export function decodeRateRefresh(value:unknown):RateRefreshRow[] {
+  if(!Array.isArray(value))throw new TypeError('Invalid rate refresh results');
+  return value.map((raw:unknown)=>{
+    if(!raw||typeof raw!=='object')throw new TypeError('Invalid rate refresh row');
+    const r=raw as Record<string,unknown>;
+    if(typeof r.base!=='string'||typeof r.ok!=='boolean')throw new TypeError('Invalid rate refresh row');
+    return {base:r.base,ok:r.ok,skipped:r.skipped===true,rates:redactRates(r.rates)};
+  });
+}
+export const ratesApi={
+  status:async(signal?:AbortSignal):Promise<RateStatus>=>
+    decodeRateStatus(await adminClient.json<unknown>('/settings/rate/status',{signal,cache:'no-store'})),
+  refresh:async():Promise<RateRefreshRow[]>=>
+    decodeRateRefresh(await adminClient.postJson<unknown>('/settings/rate/refresh',{bases:[]})),
+};

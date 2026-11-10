@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeSettings, reconcileSettingsWrite, sensitiveKeys,
-  settingFields, settingsApi, validateSetting } from './settings';
+  settingFields, settingsApi, validateSetting, decodeRateStatus, decodeRateRefresh } from './settings';
 afterEach(() => vi.unstubAllGlobals());
 const ok = (data: unknown) => new Response(JSON.stringify({
   status_code: 200, message: 'success', data, request_id: '',
@@ -63,5 +63,27 @@ describe('W42 settings exact Go contracts', () => {
     expect(fetcher.mock.calls[0][1]?.method).toBe('PUT');
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({ items: payload });
     expect(JSON.stringify(summary)).not.toContain('top-secret');
+  });
+});
+
+describe('W42 rate cache: no token-bearing URLs in UI state',()=>{
+  it('projects live cache state without source url or last error',()=>{
+    const data=decodeRateStatus({mode:'auto',api_url:'https://example.com/?secret=hidden',
+      cache_ttl_seconds:300,bases:[{
+        base:'cny',rates:{usdt:0.14},source_url:'https://example.com/key/token',
+        is_stale:true,last_refresh_ok:false,last_error:'token leaked',
+        last_success_at:'2026-11-09T00:00:00Z',last_attempt_at:'2026-11-10T00:00:00Z',
+      }]});
+    expect(data.bases).toHaveLength(1);
+    expect(JSON.stringify(data)).not.toMatch(/token|secret|source_url/);
+    expect(data.bases[0].is_stale).toBe(true);
+    expect(()=>decodeRateStatus({bases:[]})).toThrow();
+  });
+  it('honors per-base failed refreshes under HTTP 200 without exposing raw errors',()=>{
+    const data=decodeRateRefresh([{base:'cny',ok:true,rates:{usdt:0.14}},
+      {base:'usd',ok:false,error:'credentials: secret'}]);
+    expect(data.map(x=>x.ok)).toEqual([true,false]);
+    expect(JSON.stringify(data)).not.toContain('credentials');
+    expect(()=>decodeRateRefresh({ok:true})).toThrow();
   });
 });

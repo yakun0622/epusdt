@@ -108,8 +108,8 @@ export function classifyStatusReadError(error:unknown):'conflict'|'missing'|'off
   return 'offline';
 }
 export function nextCashierPollDelay(failures:number):number {
-  if(!Number.isFinite(failures)||failures<0)return 15000;
-  return Math.min(60000,15000*Math.pow(2,Math.min(Math.floor(failures),2)));
+  if(!Number.isFinite(failures)||failures<0)return 5000;
+  return Math.min(60000,5000*Math.pow(2,Math.min(Math.floor(failures),4)));
 }
 export function stopCashierPolling(state:CashierState):boolean {
   return state.kind==='paid'||state.kind==='expired';

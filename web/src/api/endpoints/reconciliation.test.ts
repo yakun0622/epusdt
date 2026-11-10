@@ -52,7 +52,7 @@ describe('W52 authoritative payment reconciliation',()=>{
    expect(classifyStatusReadError(new ApiError('not wait pay',400,10013))).toBe('offline');
  });
  it('caps recovery polling backoff; only terminal server statuses stop polling',()=>{
-   expect([0,1,2,3,9].map(nextCashierPollDelay)).toEqual([15000,30000,60000,60000,60000]);
+   expect([0,1,2,3,9].map(nextCashierPollDelay)).toEqual([5000,10000,20000,40000,60000]);
    expect(stopCashierPolling({kind:'paid'})).toBe(true);
    expect(stopCashierPolling({kind:'expired'})).toBe(true);
    expect(stopCashierPolling({kind:'elapsed'})).toBe(false);

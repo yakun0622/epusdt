@@ -269,7 +269,17 @@ func HandleOkPayNotify(form map[string]string, rawFormData string) error {
 		BlockTransactionId: payload.OrderID,
 	})
 	processed := err == nil
-	if err != nil && err != constant.OrderBlockAlreadyProcess {
+	if err == constant.OrderBlockAlreadyProcess {
+		// Only an exact replay for THIS already-settled order may be
+		// acknowledged. Reusing another order's transaction ID must not
+		// mark this provider order paid.
+		updated, readErr := data.GetOrderInfoByTradeId(order.TradeId)
+		if readErr != nil {return readErr}
+		if updated.Status != mdb.StatusPaySuccess ||
+			updated.BlockTransactionId != payload.OrderID {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
 

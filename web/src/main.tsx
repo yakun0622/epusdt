@@ -13,6 +13,8 @@ import { ChainsPage } from './features/networks/chains-page';
 import { RpcPage } from './features/networks/rpc-page';
 import { SettingsPage } from './features/operations/settings-page';
 import { DashboardPage } from './features/operations/dashboard-page';
+import { NotificationsPage } from './features/auxiliary/notifications-page';
+import { DisplayPage, IntegrationsPage, HelpPage, InstallGuide } from './features/auxiliary/info-pages';
 import type { SettingsPage as SettingsSection } from './api/endpoints/settings';
 import { Button, Card, LoadingState, PreferencesControls, TextField, ToastProvider } from './components/ui';
 import { I18nProvider, useI18n } from './i18n/i18n-provider';
@@ -111,7 +113,7 @@ function App() {
       <p className="muted">{t('checkout.notReady')}</p>
     </PublicPage>;
   if (route.page === 'install')
-    return <PublicPage title={t('pages.install')}><p>{t('pages.installNotReady')}</p></PublicPage>;
+    return <PublicPage title={t('pages.install')}><InstallGuide onNavigate={navigate}/></PublicPage>;
   if (['401', '403', '404', '500', '503'].includes(route.page))
     return <PublicPage title={route.page}>
       <p>{t('pages.errorNotReady')}</p>
@@ -154,6 +156,11 @@ function App() {
       route.page === 'chains' ? <ChainsPage/> :
       route.page === 'rpc' ? <RpcPage/> :
       route.page === 'dashboard' ? <DashboardPage/> :
+      route.page === 'settings-notifications' ? <NotificationsPage/> :
+      route.page === 'settings-display' ? <DisplayPage onNavigate={go}/> :
+      route.page === 'integrations' || route.page === 'payment-setup'
+        ? <IntegrationsPage onNavigate={go}/> :
+      route.page === 'help' ? <HelpPage onNavigate={go}/> :
       settingsSection ? <SettingsPage section={settingsSection} onNavigate={go}/> :
         <Card><p className="muted">{t('pages.unimplemented')}</p></Card>}
   </AdminLayout>;

@@ -110,7 +110,7 @@ function App() {
     return <main className="center"><LoadingState label={t('auth.checking')}/></main>;
   if (route.page === 'cashier')
     return <PublicPage title={t('checkout.title')}>
-      <CheckoutPage tradeId={route.tradeId ?? ''}/>
+      <CheckoutPage key={route.tradeId} tradeId={route.tradeId ?? ''} onNavigate={navigate}/>
     </PublicPage>;
   if (route.page === 'install')
     return <PublicPage title={t('pages.install')}><InstallGuide onNavigate={navigate}/></PublicPage>;

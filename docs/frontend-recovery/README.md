@@ -2,7 +2,13 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W30/W32 订单只读管理（2026-11-10）
+## 当前最新交付：W33/W34 钱包管理（2026-11-10）
+
+- [W33-W34-IMPLEMENTATION.md](./W33-W34-IMPLEMENTATION.md)：真实钱包列表、新增/备注/启停/软删除确认、HTTP 200 的批量逐项结果、仅重试失败地址及安全边界。
+- [前端 Actions #42767931148](https://github.com/yakun0622/epusdt/actions/runs/42767931148)：TypeScript、14 文件/43 测试、Vite 构建通过。浏览器 E2E、真实 Go 接口联调未完成。
+- 下一阶段推荐 **W35 API Key 管理**，敏感凭证展示、轮换和删除必须显式确认且不落日志；**W31 仍未实施**。
+
+## 历史交付：W30/W32 订单只读管理（2026-11-10）
 
 - [W30-W32-IMPLEMENTATION.md](./W30-W32-IMPLEMENTATION.md)：Go 订单分页筛选契约、真实只读订单列表/详情、CSV Blob 下载及修正后端导出最大 10,000 行。
 - 前端 [Actions #42664249919](https://github.com/yakun0622/epusdt/actions/runs/42664249919)：TypeScript、11 个测试文件/35 项测试、Vite 构建 **通过**。

@@ -72,8 +72,10 @@ export function verifyCheckout(
     return {kind:'unverified'};
   if(latest.status===2)return {kind:'paid'};
   if(latest.status===3)return {kind:'expired'};
-  if(latest.status===4)return {kind:'choose'};
+  // A status=4 placeholder may not be transitioned by the server promptly;
+  // never encourage a new selection beyond the order expiry timestamp.
   if(serverNow>=checkout.expirationTime)return {kind:'expired'};
+  if(latest.status===4)return {kind:'choose'};
   if(checkout.statusAtCreation!==1)return {kind:'awaiting-details'};
   if(checkout.token.trim()&&checkout.network.trim()&&checkout.receiveAddress.trim()&&checkout.actualAmount>0)
     return {kind:'payment',payment:'onchain',address:checkout.receiveAddress};

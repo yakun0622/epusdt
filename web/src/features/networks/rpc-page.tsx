@@ -106,7 +106,7 @@ export function RpcPage() {
           weight: Number(draft.weight), enabled: draft.enabled, purpose: draft.purpose,
         };
         if (draft.url.trim()) patch.url = draft.url;
-        if (draft.clearCredential) patch.api_key = '';
+        if (draft.clearCredential) patch.clear_api_key = true;
         else if (draft.apiKey) patch.api_key = draft.apiKey;
         await rpcApi.update(modal.row.id, modal.row.type, patch);
       }

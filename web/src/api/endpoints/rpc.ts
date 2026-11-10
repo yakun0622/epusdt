@@ -27,7 +27,8 @@ export interface RpcCreate {
 export interface RpcUpdate {
   url?: string;
   weight?: number;
-  api_key?: string; // omit to preserve existing credential; empty string explicitly clears it
+  api_key?: string; // nonempty replaces; empty or omitted preserves existing credential
+  clear_api_key?: boolean; // only this explicit flag clears an existing credential
   enabled?: boolean;
   purpose?: RpcPurpose;
 }
@@ -88,7 +89,12 @@ export function validateRpcUpdate(input: RpcUpdate, type: RpcType): RpcUpdate {
     clean.enabled = input.enabled;
   }
   if (input.purpose !== undefined) clean.purpose = safePurpose(input.purpose);
-  if (input.api_key !== undefined) clean.api_key = input.api_key;
+  if (input.clear_api_key === true) {
+    if (input.api_key) throw new TypeError('Cannot replace and clear RPC credentials together');
+    clean.clear_api_key = true;
+  } else if (input.api_key) {
+    clean.api_key = input.api_key;
+  }
   return clean;
 }
 export function decodeRpcNodes(value: unknown): RpcNodeView[] {

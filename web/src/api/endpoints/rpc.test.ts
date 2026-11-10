@@ -49,7 +49,9 @@ describe('W41 RPC credentials and status contracts', () => {
     expect(() => validateRpcCreate({ network: 'tron', type: 'http', url: 'https://user:pwd@rpc.example',
       weight: 1, api_key: '', enabled: true, purpose: 'both' })).toThrow('Invalid RPC URL');
     expect(validateRpcUpdate({ weight: 1 }, 'http')).toEqual({ weight: 1 });
-    expect(validateRpcUpdate({ api_key: '' }, 'http')).toEqual({ api_key: '' });
+    expect(validateRpcUpdate({ api_key: '' }, 'http')).toEqual({});
+    expect(validateRpcUpdate({ clear_api_key: true }, 'http')).toEqual({ clear_api_key: true });
+    expect(() => validateRpcUpdate({ api_key: 'replacement', clear_api_key: true }, 'http')).toThrow();
     expect(() => validateRpcUpdate({ url: 'ws://rpc.example' }, 'http')).toThrow('HTTP RPC');
   });
 });

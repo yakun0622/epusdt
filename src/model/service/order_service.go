@@ -16,7 +16,6 @@ import (
 	"github.com/GMWalletApp/epusdt/model/response"
 	addressutil "github.com/GMWalletApp/epusdt/util/address"
 	"github.com/GMWalletApp/epusdt/util/constant"
-	"github.com/GMWalletApp/epusdt/util/log"
 	"github.com/GMWalletApp/epusdt/util/math"
 	"github.com/GMWalletApp/epusdt/util/security"
 	"github.com/dromara/carbon/v2"
@@ -31,7 +30,6 @@ const (
 
 var (
 	gCreateTransactionLock sync.Mutex
-	gOrderProcessingLock   sync.Mutex
 )
 
 var (
@@ -254,142 +252,11 @@ func orderProcessingWithAllowedStatuses(req *request.OrderProcessingRequest, all
 	})
 }
 
+// orderProcessing must commit the claim, child, parent, siblings and callback
+// scheduling in ONE primary-DB transaction. The previous implementation
+// committed a child first and could leave parent pending after a crash.
 func orderProcessing(req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
-	gOrderProcessingLock.Lock()
-	defer gOrderProcessingLock.Unlock()
-
-	tx := dao.Mdb.Begin()
-	exist, err := data.GetOrderByBlockIdWithTransaction(tx, req.BlockTransactionId)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	if exist.ID > 0 {
-		tx.Rollback()
-		return constant.OrderBlockAlreadyProcess
-	}
-
-	updated, err := data.OrderSuccessWithStatusesWithTransaction(tx, req, opts.allowedStatuses)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	if !updated {
-		tx.Rollback()
-		return constant.OrderStatusConflict
-	}
-	if err = tx.Commit().Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	// Load order to check parent-child relationship
-	order, err := data.GetOrderInfoByTradeId(req.TradeId)
-	if err != nil {
-		if strings.TrimSpace(req.Network) != "" && strings.TrimSpace(req.ReceiveAddress) != "" && strings.TrimSpace(req.Token) != "" && req.Amount > 0 {
-			if unlockErr := data.UnLockTransaction(req.Network, req.ReceiveAddress, req.Token, req.Amount); unlockErr != nil {
-				log.Sugar.Warnf("[order] fallback unlock transaction after pay success failed, trade_id=%s, err=%v", req.TradeId, unlockErr)
-			}
-		}
-		return fmt.Errorf("load paid order failed, trade_id=%s: %w", req.TradeId, err)
-	}
-	if hasTransactionLock(order) {
-		if err = data.UnLockTransaction(order.Network, order.ReceiveAddress, order.Token, order.ActualAmount); err != nil {
-			log.Sugar.Warnf("[order] unlock transaction after pay success failed, trade_id=%s, err=%v", order.TradeId, err)
-		}
-	}
-
-	// Parent order paid directly: expire all sub-orders and release their locks
-	if order.ParentTradeId == "" {
-		subs, subErr := data.GetActiveSubOrders(order.TradeId)
-		if subErr != nil {
-			log.Sugar.Errorf("[order] get sub-orders for parent failed, trade_id=%s, err=%v", order.TradeId, subErr)
-			return fmt.Errorf("load sub-orders failed, parent_trade_id=%s: %w", order.TradeId, subErr)
-		}
-		for _, sub := range subs {
-			if err = data.ExpireOrderByTradeId(sub.TradeId); err != nil {
-				log.Sugar.Warnf("[order] expire sub-order failed, trade_id=%s, err=%v", sub.TradeId, err)
-			}
-			if sub.PayProvider != "" && sub.PayProvider != mdb.PaymentProviderOnChain {
-				if err = data.MarkProviderOrderExpired(sub.TradeId, sub.PayProvider); err != nil {
-					log.Sugar.Warnf("[order] expire provider order failed, trade_id=%s, provider=%s, err=%v", sub.TradeId, sub.PayProvider, err)
-				}
-			}
-			if hasTransactionLock(&sub) {
-				if err = data.UnLockTransaction(sub.Network, sub.ReceiveAddress, sub.Token, sub.ActualAmount); err != nil {
-					log.Sugar.Warnf("[order] unlock sub-order transaction failed, trade_id=%s, err=%v", sub.TradeId, err)
-				}
-			}
-		}
-		return nil
-	}
-
-	parent, err := data.GetOrderInfoByTradeId(order.ParentTradeId)
-	if err != nil {
-		log.Sugar.Errorf("[order] load parent order failed, parent_trade_id=%s, err=%v", order.ParentTradeId, err)
-		return fmt.Errorf("load parent order failed, parent_trade_id=%s: %w", order.ParentTradeId, err)
-	}
-
-	// Snapshot siblings for lock release after DB state transition commits.
-	siblings, err := data.GetSiblingSubOrders(parent.TradeId, order.TradeId)
-	if err != nil {
-		log.Sugar.Errorf("[order] get sibling sub-orders failed, parent_trade_id=%s, err=%v", parent.TradeId, err)
-		return fmt.Errorf("load sibling sub-orders failed, parent_trade_id=%s: %w", parent.TradeId, err)
-	}
-
-	finalizeTx := dao.Mdb.Begin()
-
-	// Mark parent as paid with sub-order's payment details
-	updatedParent, markErr := data.MarkParentOrderSuccessWithStatusesWithTransaction(finalizeTx, parent.TradeId, order, opts.parentAllowedStatuses)
-	if markErr != nil {
-		finalizeTx.Rollback()
-		log.Sugar.Errorf("[order] mark parent success failed, parent_trade_id=%s, err=%v", parent.TradeId, markErr)
-		return fmt.Errorf("mark parent success failed, parent_trade_id=%s: %w", parent.TradeId, markErr)
-	}
-	if !updatedParent {
-		finalizeTx.Rollback()
-		return fmt.Errorf("parent order not updated, trade_id=%s is not in an allowed status", parent.TradeId)
-	}
-
-	if err = data.ExpireSiblingSubOrdersWithTransaction(finalizeTx, parent.TradeId, order.TradeId); err != nil {
-		finalizeTx.Rollback()
-		return fmt.Errorf("expire sibling sub-orders failed, parent_trade_id=%s: %w", parent.TradeId, err)
-	}
-
-	if err = finalizeTx.Commit().Error; err != nil {
-		finalizeTx.Rollback()
-		return fmt.Errorf("commit parent finalize tx failed, parent_trade_id=%s: %w", parent.TradeId, err)
-	}
-
-	// Sub-order should not trigger its own callback (notify_url is empty).
-	// OrderSuccessWithTransaction unconditionally sets callback_confirm=No,
-	// reset it only after the parent order is successfully finalized.
-	if err = data.ResetCallbackConfirmOk(order.TradeId); err != nil {
-		log.Sugar.Warnf("[order] reset sub-order callback_confirm failed, trade_id=%s, err=%v", order.TradeId, err)
-	}
-
-	// Release parent's own wallet lock
-	if hasTransactionLock(parent) {
-		if err = data.UnLockTransaction(parent.Network, parent.ReceiveAddress, parent.Token, parent.ActualAmount); err != nil {
-			log.Sugar.Warnf("[order] unlock parent transaction failed, parent_trade_id=%s, err=%v", parent.TradeId, err)
-		}
-	}
-
-	// Release sibling locks after their status transitions commit.
-	for _, sib := range siblings {
-		if sib.PayProvider != "" && sib.PayProvider != mdb.PaymentProviderOnChain {
-			if err = data.MarkProviderOrderExpired(sib.TradeId, sib.PayProvider); err != nil {
-				log.Sugar.Warnf("[order] expire sibling provider order failed, trade_id=%s, provider=%s, err=%v", sib.TradeId, sib.PayProvider, err)
-			}
-		}
-		if hasTransactionLock(&sib) {
-			if err = data.UnLockTransaction(sib.Network, sib.ReceiveAddress, sib.Token, sib.ActualAmount); err != nil {
-				log.Sugar.Warnf("[order] unlock sibling transaction failed, trade_id=%s, err=%v", sib.TradeId, err)
-			}
-		}
-	}
-
-	return nil
+	return settleOrderAtomically(req, opts)
 }
 
 // ReserveAvailableWalletAndAmount finds and locks a network+address+token+amount pair.

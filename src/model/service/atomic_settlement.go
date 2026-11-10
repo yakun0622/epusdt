@@ -142,6 +142,14 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 			return constant.OrderStatusConflict
 		}
 		if !matchingSettlementTarget(order,req) {return constant.OrderStatusConflict}
+		// Legacy half-settled children are not automatically repaired.
+		// Do not settle the parent again under a different transaction
+		// while a paid child already exists without an attributed parent.
+		if root.PayBySubId!=0 {return constant.OrderStatusConflict}
+		var previouslyPaidChildren int64
+		if err:=tx.Model(&mdb.Orders{}).Where("parent_trade_id = ? AND status = ?",
+			root.TradeId,mdb.StatusPaySuccess).Count(&previouslyPaidChildren).Error;err!=nil {return err}
+		if previouslyPaidChildren>0 {return constant.OrderStatusConflict}
 		canonical:=settlementTxID(order.Network,order.PayProvider,req.BlockTransactionId)
 		if canonical=="" {return constant.ParamsMarshalErr}
 		// A legacy row could already own the transaction, including the

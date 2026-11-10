@@ -228,3 +228,32 @@ func TestW54InjectedParentWriteFailureRollsBackEverything(t *testing.T) {
 	if err:=OrderProcessing(w54Req(child,"tx_rollback"));err!=nil {t.Fatal(err)}
 	if w54Claims(t)!=1 {t.Fatal("retry after rollback did not commit claim exactly once")}
 }
+
+func TestW54LegacyPartialChildBlocksNewParentSettlement(t *testing.T) {
+	cleanup:=testutil.SetupTestDatabases(t);defer cleanup()
+	root:=w54Order("w54_orphan_root",mdb.StatusWaitPay)
+	orphan:=w54Order("w54_orphan_paid",mdb.StatusPaySuccess)
+	orphan.ParentTradeId=root.TradeId
+	orphan.BlockTransactionId="old_child_hash"
+	w54Seed(t,root,orphan)
+	if err:=OrderProcessing(w54Req(root,"new_parent_hash"));err!=constant.OrderStatusConflict {
+		t.Fatalf("expected orphan conflict, got %v",err)
+	}
+	if w54Load(t,root.TradeId).Status!=mdb.StatusWaitPay || w54Claims(t)!=0 {
+		t.Fatal("parent incorrectly paid despite orphan paid child")
+	}
+}
+func TestW54SoftDeletedHistoricPaidOrderStillOwnsItsHash(t *testing.T) {
+	cleanup:=testutil.SetupTestDatabases(t);defer cleanup()
+	prior:=w54Order("w54_deleted_paid",mdb.StatusPaySuccess)
+	prior.BlockTransactionId="0X"+strings.ToUpper(strings.Repeat("e",64))
+	next:=w54Order("w54_deleted_next",mdb.StatusWaitPay)
+	w54Seed(t,prior,next)
+	if err:=dao.Mdb.Delete(prior).Error;err!=nil {t.Fatal(err)}
+	if err:=OrderProcessing(w54Req(next,"0x"+strings.Repeat("e",64)));err!=constant.OrderBlockAlreadyProcess {
+		t.Fatalf("soft-deleted prior transaction replay error=%v",err)
+	}
+	if w54Claims(t)!=0 || w54Load(t,next.TradeId).Status!=mdb.StatusWaitPay {
+		t.Fatal("reused historical payment hash")
+	}
+}

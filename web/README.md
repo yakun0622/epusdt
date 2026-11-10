@@ -31,8 +31,9 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - W42：五种配置页面及 `rate/status` 缓存状态与确认式手动刷新；批量 PUT 逐项结果、凭证隐藏、URL 脱敏、错误重试。
 - W43：`/dashboard` 实际概览、订单统计/日小时趋势、RPC 进程快照，禁用虚假 KPI 和跨币种收入汇总展示。
 - W44：Display 品牌只读预览、Notifications 实际 Telegram 渠道与脱敏、Integrations 真实接入状态只读页、Help 文档、Install 只读说明。Webhook/Email 暂无发送器。
+- W50：公共 `/cashier/:trade_id` 只读订单信息、最新状态二次校验、到期时间与链上收款信息安全展示；仅调用 `/pay/checkout-counter-resp/:trade_id` 和 `/pay/check-status/:trade_id` 两个 GET，不发起支付或创建订单。
 
-当前 Dashboard 已使用真实 Go 接口展示订单/RPC 指标；`/orders` 是只读订单表格/CSV，`/addresses` 已恢复钱包管理，System/Telegram/Pay/EPAY/OkPay 配置页已接入。完整支付流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
+当前 Dashboard 已使用真实 Go 接口展示订单/RPC 指标；`/orders` 是只读订单表格/CSV，`/addresses` 已恢复钱包管理，System/Telegram/Pay/EPAY/OkPay 配置页已接入。支付方式切换/链上回调完整流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
 
 ## Actions 编译
 
@@ -76,3 +77,7 @@ JWT 存储为浏览器可读 Cookie，是原版行为，不提供 HttpOnly 保�
 ## W44 辅助页面与新合并流程
 
 详见 `docs/frontend-recovery/W44-IMPLEMENTATION.md`。从 W44 起每个任务只建一个临时分支，分支 Actions 全绿后 squash 合并 master 一次，最后清理临时分支。Webhook/Email 无发送器、Install 无安装 API，页面不会承诺可用；生产 `src/www` 不变。
+
+## W50 公共收银台只读交付
+
+实现报告：`docs/frontend-recovery/W50-IMPLEMENTATION.md`。订单状态 1/2/3/4 来自真实 Go API，当前状态和初始化必须分别读取并匹配；秒/毫秒严格区分，无效状态及到期订单不再显示付款目标。第三方支付链接不打开，收银台只显示已核实的代币、网络、地址与数量。最新分支验证：[Actions #42798556680](https://github.com/yakun0622/epusdt/actions/runs/42798556680)：32 个测试文件/93 项测试、TS 和 Vite Build 成功。实际支付、网络切换及订单写入保留给后续 W51–W55；W31 和生产 `src/www` 不改。

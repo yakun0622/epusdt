@@ -85,7 +85,7 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
   const onchain=!switching&&view.kind==='payment'&&view.payment==='onchain'&&checkout;
   const canChoose=Boolean(checkout&&snapshot&&serverNow!==null&&
     !error&&!loading&&(view.kind==='choose'||view.kind==='payment')&&
-    checkout.canSwitch&&view.kind!=='selected-child'&&
+    checkout.canSwitch&&
     !snapshot?.reconciliation.relatedTradeId&& !checkout.hasHostedPaymentLink&&
     checkout.receiveAddress.trim().toUpperCase()!=='OKPAY'&&
     serverNow<checkout.expirationTime);

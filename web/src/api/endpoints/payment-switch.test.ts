@@ -43,8 +43,14 @@ describe('W51 one-shot network switching and server-authoritative reconciliation
     const parent=snapshot();
     const hosted=decodePublicCheckout({...wire(),receive_address:'OKPAY',
       network:'tron',payment_url:'https://provider/?token=SECRET'},'parent_A');
-    expect(()=>allowPaymentSelection({checkout:hosted,status:parent.status},
-      opts,'tron','USDT',hosted.serverTime)).toMatchObject({problem:'provider'});
+    try {
+      allowPaymentSelection({checkout:hosted,status:parent.status},
+        opts,'tron','USDT',hosted.serverTime);
+      throw new Error('expected a rejected provider-to-chain switch');
+    } catch (error) {
+      expect(error).toBeInstanceOf(SwitchPaymentError);
+      expect(error).toMatchObject({problem:'provider'});
+    }
   });
   it('requires same initial and preflight snapshots; no POST after another tab changes order',()=>{
     expect(unchangedBeforeSwitch(snapshot(),snapshot())).toBe(true);

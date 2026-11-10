@@ -16,7 +16,6 @@ import (
 	"github.com/GMWalletApp/epusdt/model/response"
 	addressutil "github.com/GMWalletApp/epusdt/util/address"
 	"github.com/GMWalletApp/epusdt/util/constant"
-	"github.com/GMWalletApp/epusdt/util/log"
 	"github.com/GMWalletApp/epusdt/util/math"
 	"github.com/GMWalletApp/epusdt/util/security"
 	"github.com/dromara/carbon/v2"

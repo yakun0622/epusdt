@@ -37,7 +37,7 @@ describe('W33 wallet list and filters', () => {
 
 describe('W34 wallet mutations', () => {
   it('uses exact Go endpoints and bodies for create, edit, toggle, delete', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ok(wallet));
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => ok(wallet));
     vi.stubGlobal('fetch', fetchImpl);
     await walletsApi.create({ network: 'TRON', address: ' T-test ', remark: ' new ' });
     await walletsApi.editRemark(8, '');

@@ -163,6 +163,12 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 		result:=tx.Clauses(clause.OnConflict{DoNothing:true}).Create(claim)
 		if result.Error!=nil {return result.Error}
 		if result.RowsAffected!=1 {return constant.OrderBlockAlreadyProcess}
+		// MySQL can report a matched row for ON DUPLICATE KEY NOOP
+		// depending on DSN clientFoundRows. Read back the claimant to
+		// reject a conflicting owner even if RowsAffected looked positive.
+		var claimant mdb.PaymentTxClaim
+		if err:=tx.Where("claim_key = ?",claim.ClaimKey).Take(&claimant).Error;err!=nil{return err}
+		if claimant.TradeID!=order.TradeId {return constant.OrderBlockAlreadyProcess}
 
 		// Ensure callback ownership is decided in this transaction, not
 		// repaired later by a separate read/update.

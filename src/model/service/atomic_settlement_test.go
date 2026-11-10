@@ -257,3 +257,20 @@ func TestW54SoftDeletedHistoricPaidOrderStillOwnsItsHash(t *testing.T) {
 		t.Fatal("reused historical payment hash")
 	}
 }
+
+func TestW54ClaimOwnershipRejectsConflictingPreexistingClaim(t *testing.T) {
+	cleanup:=testutil.SetupTestDatabases(t);defer cleanup()
+	o:=w54Order("w54_existing_claim",mdb.StatusWaitPay)
+	w54Seed(t,o)
+	key:=settlementClaimKey(o.Network,o.PayProvider,"some-hash")
+	claim:=&mdb.PaymentTxClaim{
+		ClaimKey:key,TradeID:"another-order",Network:o.Network,
+		Provider:o.PayProvider,TransactionID:"some-hash",
+	}
+	if err:=dao.Mdb.Create(claim).Error;err!=nil {t.Fatal(err)}
+	err:=OrderProcessing(w54Req(o,"some-hash"))
+	if err!=constant.OrderBlockAlreadyProcess {t.Fatalf("conflicting claim error=%v",err)}
+	if w54Load(t,o.TradeId).Status!=mdb.StatusWaitPay || w54Claims(t)!=1 {
+		t.Fatal("conflicting owner settled or changed a payment")
+	}
+}

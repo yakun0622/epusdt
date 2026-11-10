@@ -34,3 +34,4 @@ jobs:
         run: |
           go test ./model/service -run '^Test(W54|OrderProcessing|HandleOkPayNotify|Submit|W53)' -count=1 -v
           go test ./controller/comm ./route -run TestNoMatchingTestsForCompile -count=1
+          go test ./model/data ./model/dao ./task -count=1

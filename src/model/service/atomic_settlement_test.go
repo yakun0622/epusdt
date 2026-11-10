@@ -202,3 +202,29 @@ func TestW54OkPayLedgerAndOrderCommitTogether(t *testing.T) {
 		t.Fatal("provider/order commit inconsistent")
 	}
 }
+
+func TestW54InjectedParentWriteFailureRollsBackEverything(t *testing.T) {
+	cleanup:=testutil.SetupTestDatabases(t);defer cleanup()
+	root:=w54Order("w54_failure_parent",mdb.StatusWaitPay)
+	child:=w54Order("w54_failure_child",mdb.StatusWaitPay)
+	child.ParentTradeId=root.TradeId
+	w54Seed(t,root,child)
+
+	// A real SQLite constraint failure occurs after the child UPDATE and
+	// unique claim INSERT, at the parent UPDATE. Both must be rolled back.
+	trigger:=`CREATE TRIGGER w54_fail_parent BEFORE UPDATE OF status ON orders
+		WHEN OLD.trade_id = 'w54_failure_parent'
+		BEGIN SELECT RAISE(ABORT, 'forced parent update failure'); END`
+	if err:=dao.Mdb.Exec(trigger).Error;err!=nil {t.Fatal(err)}
+	err:=OrderProcessing(w54Req(child,"tx_rollback"))
+	if err==nil {t.Fatal("expected injected parent SQL failure")}
+	if w54Claims(t)!=0 ||
+		w54Load(t,root.TradeId).Status!=mdb.StatusWaitPay ||
+		w54Load(t,child.TradeId).Status!=mdb.StatusWaitPay ||
+		w54Load(t,child.TradeId).BlockTransactionId!="" {
+		t.Fatal("DB error left partial payment or a transaction claim")
+	}
+	if err:=dao.Mdb.Exec("DROP TRIGGER w54_fail_parent").Error;err!=nil {t.Fatal(err)}
+	if err:=OrderProcessing(w54Req(child,"tx_rollback"));err!=nil {t.Fatal(err)}
+	if w54Claims(t)!=1 {t.Fatal("retry after rollback did not commit claim exactly once")}
+}

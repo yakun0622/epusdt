@@ -790,6 +790,16 @@ func buildCheckoutResponse(order *mdb.Orders) *response.CheckoutCounterResponse 
 }
 
 func completeWaitSelectOkPayOrder(parent *mdb.Orders, token string) (*response.CheckoutCounterResponse, error) {
+	// A previous payLink call may have succeeded remotely but failed before
+	// local reconciliation. Never reset an existing provider record to
+	// "creating" and issue a second external purchase for a status=4 parent.
+	previous, err := data.GetProviderOrderByTradeIDAndProvider(parent.TradeId, mdb.PaymentProviderOkPay)
+	if err != nil {
+		return nil, err
+	}
+	if previous.ID > 0 {
+		return nil, constant.OrderStatusConflict
+	}
 	rate := config.GetRateForCoin(strings.ToLower(token), strings.ToLower(parent.Currency))
 	if rate <= 0 {
 		return nil, constant.RateAmountErr
@@ -820,9 +830,11 @@ func completeWaitSelectOkPayOrder(parent *mdb.Orders, token string) (*response.C
 		Status:          mdb.ProviderOrderStatusCreating,
 		NotifyRaw:       "",
 	}
-	if err := data.UpsertProviderOrderCreatingWithTransaction(tx, providerRow); err != nil {
+	// Unique (trade_id, provider) insertion is a cross-process safety net.
+	// Do not upsert and reset a row left by an uncertain provider request.
+	if err := data.CreateProviderOrderWithTransaction(tx, providerRow); err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, constant.OrderStatusConflict
 	}
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()

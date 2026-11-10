@@ -2,7 +2,14 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W35 API Key 管理（2026-11-10）
+## 当前最新交付：W40/W41 Chains、Token 和 RPC（2026-11-10）
+
+- [W40-W41-IMPLEMENTATION.md](./W40-W41-IMPLEMENTATION.md)：网络与 Token 管理、RPC 健康检查/重试、服务端凭证与 URL 脱敏、原编译页面的空凭证兼容。
+- [前端 Actions #42781772440](https://github.com/yakun0622/epusdt/actions/runs/42781772440)：TypeScript、22 文件/63 测试、Vite Build 成功。
+- [RPC Go 安全专项工作流](https://github.com/yakun0622/epusdt/actions/workflows/rpc-secret-security.yml)：覆盖密钥 JSON 保护、URL 脱敏、旧表单不误删凭证。
+- 下一阶段 W42/W43 配置与仪表盘。**W31 订单危险操作继续未实施**，不更换生产 src/www。
+
+## 历史交付：W35 API Key 管理（2026-11-10）
 
 - [W35-IMPLEMENTATION.md](./W35-IMPLEMENTATION.md)：列表/CRUD/状态/统计、明确查看和轮换 secret、60 秒临时展示、后端禁缓存头、轮换/删除风险及待验证边界。
 - [Web Actions #42771312689](https://github.com/yakun0622/epusdt/actions/runs/42771312689)：17 文件/52 项测试、TypeScript、Vite 构建成功。

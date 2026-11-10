@@ -2,6 +2,16 @@
 
 > **当前状态（2026-11-10）**：W10～W16 的首轮代码、W20/W21 基础布局已落地，相关 Actions 编译及单元测试通过；浏览器对照/真实支付仍未完成，不能等同业务端到端验收。W14/W15/W16 详见本次交付记录。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
 
+## 2026-11-10：W40/W41 Chain、Token、RPC 管理已实现
+
+- **W40**：`/chains` 真实网络列表和更新（仅 `GET /chains`、`PATCH /chains/:network`；Go **没有**链的创建或删除接口），编辑名称/确认数/扫描周期和布尔启停；按网络过滤 ChainTokens，支持新增、编辑、`POST /chain-tokens/:id/status` 布尔开关、需输入币种符号确认的软删除。Aptos 启用代币必须填写 Move 资产 ID。
+- **W41**：`/rpc` 节点列表、网络筛选、新增、编辑、布尔启停、需输入节点 ID 确认的软删除和 `POST /rpc-nodes/:id/health-check`。Go `status` 是 `unknown|ok|down` 字符串而非 `enabled`；当前健康检查仅为 TCP 连通性探测，并非链节点同步或支付能力验证。
+- RPC 安全：`RpcNode.ApiKey` 使用 `json:"-"`；新列表请求 `GET /rpc-nodes?redact=1`，后端只返回 scheme+host(:port)，不返回 URL 路径、query 或 userinfo；前端再次采用白名单映射，不把原始 `url` 或 `api_key` 留在列表 state/持久存储或日志。编辑表单凭证和 URL 默认留空，需手动覆盖；`clear_api_key:true` 才显式清除，原版页面编辑提交空 `api_key` 不再误清密钥。
+- W40/W41 支持独立加载、错误/重试、写入后重新读取数据以及确认弹窗；新编写的六语言核心模块词条已接入现有 Light/Dark/System 主题。
+- [前端 Actions #42781772440](https://github.com/yakun0622/epusdt/actions/runs/42781772440) 成功：TypeScript、Vitest **22 文件/63 测试**及 Vite Build。最新 Go 安全专项测试见 `rpc-secret-security.yml` 工作流。
+- **W31 始终未实施**；生产 `src/www` 未改、未发布新前端。
+- **下一阶段 W42/W43**：System/Telegram/Pay/EPay/OkPay 设置及 Dashboard 真实概览；重点保护 Telegram、EPay、OkPay 等敏感配置，准确区分只读/可编辑配置与统计数字单位。
+
 ## 2026-11-10：W35 API Key 管理与密钥保护（首批完成）
 
 - 真实 `/keys` 页面：`GET /api-keys` 数组列表、前端名称/PID 查询、创建、编辑 name/ip_whitelist/notify_url、状态 1/2、使用统计、按需查看 secret、轮换、软删除。
@@ -145,4 +155,4 @@
 - 未通过项与回滚方式；
 - 明确声明是否动过 `src/www`、Go 和 CI。
 
-**当前最新顺序**：W40/W41 Chains、ChainTokens 和 RPC（需加强凭证脱敏）→ W42/W43 设置与仪表盘 → W44；W31 订单操作独立高风险验收，暂不接入；未通过真实浏览器和支付回归前禁止替换 src/www。
+**当前最新顺序**：W42/W43 真实系统设置与仪表盘 → W44 辅助页面 → W50+ 公共收银台测试态恢复 → W60+ 浏览器/安全/发布回归。W31 资金相关订单操作仍须独立高风险验收；未通过浏览器及支付链路回归前禁止替换 src/www。

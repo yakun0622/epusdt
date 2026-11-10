@@ -9,7 +9,7 @@ describe('W42 settings pages',()=>{
     const html=renderToStaticMarkup(<I18nProvider><ToastProvider>
       <SettingsPage section="system" onNavigate={()=>{}}/>
     </ToastProvider></I18nProvider>);
-    for(const label of ['System','Telegram','Payment & Rates','EPAY','OkPay'])
+    for(const label of ['System','Telegram','Payment &amp; Rates','EPAY','OkPay'])
       expect(html).toContain(label);
     expect(html).not.toContain('shop_token=secret');
     expect(html).not.toContain('system.jwt_secret');

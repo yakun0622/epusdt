@@ -79,7 +79,7 @@ export function evaluateCashier(
     return {kind:'unverified'};
   if(r.requiresReview)return {kind:'review'};
   if(r.status===2)return r.paidConfirmed?{kind:'paid'}:{kind:'review'};
-  if(r.rootStatus===2 && r.status!==2)return {kind:'review'};
+  if(r.rootStatus===2)return {kind:'review'};
   if(r.status===3)return {kind:'expired'};
   // A passed deadline does not itself transition the SQL order to status=3.
   if(serverNow>=r.expirationTime)return {kind:'elapsed'};

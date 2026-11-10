@@ -141,7 +141,7 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
         {snapshot?.reconciliation.provider==='okpay'&&
           <p className="muted checkout-provider-state">{t('reconProviderLocal')}
             {' · '}{snapshot.reconciliation.providerStatus}
-          </p>
+          </p>}
         <dl className="checkout-fields">
           <div><dt>{t('amount')}</dt>
             <dd>{formatNumber(checkout.amount,locale,8)} {checkout.currency}</dd></div>

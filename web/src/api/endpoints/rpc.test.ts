@@ -22,6 +22,7 @@ describe('W41 RPC credentials and status contracts', () => {
     expect(publicEndpoint('not-valid')).toBe('[hidden endpoint]');
     expect(() => decodeRpcNodes([{ ...row, enabled: 2 }])).toThrow();
     expect(() => decodeRpcNodes([{ ...row, status: 2 }])).toThrow();
+    expect(decodeRpcNodes([{ ...row, status: '', purpose: '' }])[0]).toMatchObject({status: 'unknown', purpose: 'general'});
   });
   it('uses the Go RPC endpoints and boolean PATCH status', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => ok([row]));

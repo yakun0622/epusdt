@@ -56,7 +56,7 @@ export function validateRpcUrl(url: string, type: RpcType): string {
   const value = url.trim();
   let parsed: URL;
   try { parsed = new URL(value); } catch { throw new TypeError('Invalid RPC URL'); }
-  if (!parsed.hostname || parsed.username || parsed.password) throw new TypeError('Invalid RPC URL');
+  if (!parsed.hostname || parsed.username || parsed.password || value.length > 512) throw new TypeError('Invalid RPC URL');
   if (type === 'http' || type === 'lite') {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new TypeError('HTTP RPC URL required');
   } else if (type === 'ws') {
@@ -73,7 +73,7 @@ function safePurpose(purpose: RpcPurpose): RpcPurpose {
   return purpose;
 }
 export function validateRpcCreate(input: RpcCreate): RpcCreate {
-  if (!types.has(input.type) || typeof input.enabled !== 'boolean') throw new TypeError('Invalid RPC fields');
+  if (!types.has(input.type) || typeof input.enabled !== 'boolean' || input.api_key.length > 255) throw new TypeError('Invalid RPC fields');
   return {
     network: networkPart(input.network), type: input.type,
     url: validateRpcUrl(input.url, input.type), weight: safeWeight(input.weight),
@@ -93,6 +93,7 @@ export function validateRpcUpdate(input: RpcUpdate, type: RpcType): RpcUpdate {
     if (input.api_key) throw new TypeError('Cannot replace and clear RPC credentials together');
     clean.clear_api_key = true;
   } else if (input.api_key) {
+    if (input.api_key.length > 255) throw new TypeError('RPC credential is too long');
     clean.api_key = input.api_key;
   }
   return clean;
@@ -102,10 +103,12 @@ export function decodeRpcNodes(value: unknown): RpcNodeView[] {
   return value.map((item: unknown): RpcNodeView => {
     if (!item || typeof item !== 'object') throw new TypeError('Invalid RPC row');
     const row = item as Record<string, unknown>;
+    const purpose = row.purpose === '' || row.purpose == null ? 'general' : row.purpose;
+    const status = row.status === '' || row.status == null ? 'unknown' : row.status;
     if (!Number.isSafeInteger(row.id) || Number(row.id) < 1 ||
         typeof row.network !== 'string' || typeof row.url !== 'string' ||
-        !types.has(String(row.type)) || !purposes.has(String(row.purpose)) ||
-        !healthStatuses.has(String(row.status)) ||
+        !types.has(String(row.type)) || !purposes.has(String(purpose)) ||
+        !healthStatuses.has(String(status)) ||
         !Number.isInteger(row.weight) || typeof row.enabled !== 'boolean') {
       throw new TypeError('Invalid RPC row');
     }
@@ -113,7 +116,7 @@ export function decodeRpcNodes(value: unknown): RpcNodeView[] {
     return {
       id: row.id as number, network: row.network, endpoint: publicEndpoint(row.url),
       type: row.type as RpcType, weight: row.weight as number, enabled: row.enabled,
-      purpose: row.purpose as RpcPurpose, status: row.status as RpcHealthStatus,
+      purpose: purpose as RpcPurpose, status: status as RpcHealthStatus,
       last_latency_ms: typeof row.last_latency_ms === 'number' ? row.last_latency_ms : -1,
       last_checked_at: typeof row.last_checked_at === 'string' ? row.last_checked_at : '',
     };

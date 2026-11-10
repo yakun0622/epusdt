@@ -36,3 +36,10 @@ func TestRPCEndpointForConsoleRedactsURLSecrets(t *testing.T) {
     t.Fatalf("malformed endpoint should not be echoed")
   }
 }
+
+func TestRPCConsoleNormalizesLegacyEmptyHealthState(t *testing.T) {
+  if rpcStatusForConsole("") != "unknown" || rpcStatusForConsole("ok") != "ok" ||
+    rpcStatusForConsole("down") != "down" {
+    t.Fatalf("legacy RPC health states should normalize without confusing enabled boolean")
+  }
+}

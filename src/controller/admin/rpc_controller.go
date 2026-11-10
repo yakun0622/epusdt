@@ -64,8 +64,8 @@ func (c *BaseAdminController) ListRpcNodes(ctx echo.Context) error {
 				"type": row.Type,
 				"weight": row.Weight,
 				"enabled": row.Enabled,
-				"purpose": row.Purpose,
-				"status": row.Status,
+				"purpose": data.NormalizeRpcNodePurpose(row.Purpose),
+				"status": rpcStatusForConsole(row.Status),
 				"last_latency_ms": row.LastLatencyMs,
 				"last_checked_at": row.LastCheckedAt,
 			})
@@ -84,6 +84,15 @@ func rpcEndpointForConsole(raw string) string {
 		return "[hidden endpoint]"
 	}
 	return parsed.Scheme + "://" + parsed.Host
+}
+
+func rpcStatusForConsole(raw string) string {
+	switch raw {
+	case mdb.RpcNodeStatusOk, mdb.RpcNodeStatusDown:
+		return raw
+	default:
+		return mdb.RpcNodeStatusUnknown
+	}
 }
 
 // CreateRpcNode inserts a row. Status starts as "unknown" until the

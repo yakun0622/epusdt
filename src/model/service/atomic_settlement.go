@@ -1,10 +1,12 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/data"
@@ -113,7 +115,12 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 	if req == nil || strings.TrimSpace(req.TradeId)=="" ||
 		strings.TrimSpace(req.BlockTransactionId)=="" {return constant.ParamsMarshalErr}
 	var unlockOrders []mdb.Orders
-	err := dao.Mdb.Transaction(func(tx *gorm.DB) error {
+	// Fail closed on database lock contention or a stalled transaction.
+	// On deadline/commit uncertainty, unique claims and SQL order state
+	// decide idempotency; never issue another settlement automatically.
+	ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+	defer cancel()
+	err := dao.Mdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Resolve the parent identity before locking, then lock parent first
 		// to use a consistent lock order with competing child settlements.
 		var preliminary mdb.Orders

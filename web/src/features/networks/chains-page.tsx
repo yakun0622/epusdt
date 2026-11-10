@@ -6,9 +6,12 @@ import { useI18n } from '../../i18n/i18n-provider';
 import { networkLabel, type NetworksKey } from './i18n';
 
 type Modal =
-  | { kind: 'chain-edit' | 'chain-toggle'; row: Chain }
+  | { kind: 'chain-edit'; row: Chain }
+  | { kind: 'chain-toggle'; row: Chain }
   | { kind: 'token-create' }
-  | { kind: 'token-edit' | 'token-toggle' | 'token-delete'; row: ChainToken }
+  | { kind: 'token-edit'; row: ChainToken }
+  | { kind: 'token-toggle'; row: ChainToken }
+  | { kind: 'token-delete'; row: ChainToken }
   | null;
 type ChainDraft = { display_name: string; min_confirmations: string; scan_interval_sec: string };
 type TokenDraft = { network: string; symbol: string; contract_address: string;

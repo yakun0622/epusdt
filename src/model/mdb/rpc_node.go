@@ -28,7 +28,7 @@ type RpcNode struct {
 	// 连接类型 http=HTTP请求 ws=WebSocket长连接 lite=TON liteserver配置
 	Type    string `gorm:"column:type;size:16" json:"type" enums:"http,ws,lite" example:"http"`
 	Weight  int    `gorm:"column:weight;default:1" json:"weight" example:"1"`
-	ApiKey  string `gorm:"column:api_key;size:255" json:"api_key" example:"your-api-key"`
+	ApiKey  string `gorm:"column:api_key;size:255" json:"-"`
 	Enabled bool   `gorm:"column:enabled;default:true" json:"enabled" example:"true"`
 	// 用途 general=通用 manual_verify=补单专用 both=通用+补单
 	Purpose string `gorm:"column:purpose;size:32;default:general;index:rpc_nodes_purpose_index" json:"purpose" enums:"general,manual_verify,both" example:"general"`

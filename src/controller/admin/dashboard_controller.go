@@ -132,18 +132,31 @@ func (c *BaseAdminController) Overview(ctx echo.Context) error {
 	now := time.Now()
 	sevenDaysAgo := startOfDay(now).AddDate(0, 0, -6)
 
-	totalActual, _ := data.SumPaidActualAmount()
-
-	orderCount, successCount, volume, _ := data.PaidStatsInRange(start, end)
+	totalActual, err := data.SumPaidActualAmount()
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	orderCount, successCount, volume, err := data.PaidStatsInRange(start, end)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 	var successRate float64
 	if orderCount > 0 {
 		successRate = float64(successCount) / float64(orderCount)
 	}
 
-	_, _, sevenDayActual, _ := data.PaidStatsInRange(sevenDaysAgo, now)
-
-	activeAddr, _ := data.ActiveAddressCountInRange(start, end)
-	onlineChains, _ := data.CountEnabledChains()
+	_, _, sevenDayActual, err := data.PaidStatsInRange(sevenDaysAgo, now)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	activeAddr, err := data.ActiveAddressCountInRange(start, end)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	onlineChains, err := data.CountEnabledChains()
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 
 	return c.SucJson(ctx, map[string]interface{}{
 		"total_asset":      totalActual,
@@ -260,8 +273,14 @@ func (c *BaseAdminController) OrderStats(ctx echo.Context) error {
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
-	avg, _ := data.AveragePaymentDurationSeconds(start, end)
-	expired, _ := data.CountExpiredInRange(start, end)
+	avg, err := data.AveragePaymentDurationSeconds(start, end)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	expired, err := data.CountExpiredInRange(start, end)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 
 	var rate float64
 	if total > 0 {
@@ -442,6 +461,18 @@ func rpcStatsStatus(enabled bool, successCount, failureCount int64) string {
 		return "warning"
 	}
 	return "ok"
+}
+
+// RpcStatsSnapshot returns a one-time authenticated JSON snapshot. Unlike the
+// original SSE endpoint this works with a bearer-authenticated browser fetch,
+// without credentials in EventSource URLs or cookies.
+func (c *BaseAdminController) RpcStatsSnapshot(ctx echo.Context) error {
+	stats, err := buildRpcStatsResponse()
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	ctx.Response().Header().Set("Cache-Control", "no-store")
+	return c.SucJson(ctx, stats)
 }
 
 // RecentOrders returns the last N orders for the dashboard list card.

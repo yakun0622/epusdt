@@ -1,0 +1,35 @@
+name: Dashboard and settings safety (Go)
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'src/model/data/settings_data.go'
+      - 'src/model/data/settings_secret_test.go'
+      - 'src/controller/admin/dashboard_controller.go'
+      - 'src/route/router.go'
+      - '.github/workflows/dashboard-settings-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dashboard-settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Test sensitive setting filtering
+        working-directory: src
+        run: go test ./model/data -run TestSensitiveSettingKeysIncludePaymentAndTelegramTokens -count=1 -v
+      - name: Compile dashboard and authenticated RPC snapshot route
+        working-directory: src
+        run: go test ./controller/admin ./route -run '^$'

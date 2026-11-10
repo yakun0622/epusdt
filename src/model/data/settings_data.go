@@ -182,6 +182,8 @@ func DeleteSetting(key string) error {
 
 // sensitiveSettingKeys lists keys that must never be returned to API callers.
 var sensitiveSettingKeys = []string{
+	"system.telegram_bot_token",
+	mdb.SettingKeyOkPayShopToken,
 	mdb.SettingKeyJwtSecret,
 	mdb.SettingKeyInitAdminPasswordPlain,
 	mdb.SettingKeyInitAdminPasswordHash,

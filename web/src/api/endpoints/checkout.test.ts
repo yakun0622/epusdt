@@ -21,6 +21,7 @@ describe('W50 public checkout API semantics and safety',()=>{
     expect(verifyCheckout(checkout,{tradeId:'trade_123',status:2},checkout.serverTime).kind).toBe('paid');
     expect(verifyCheckout(checkout,{tradeId:'trade_123',status:3},checkout.serverTime).kind).toBe('expired');
     expect(verifyCheckout(checkout,{tradeId:'trade_123',status:4},checkout.serverTime).kind).toBe('choose');
+    expect(verifyCheckout(checkout,{tradeId:'trade_123',status:4},checkout.expirationTime).kind).toBe('expired');
     expect(verifyCheckout(checkout,{tradeId:'other',status:1},checkout.serverTime).kind).toBe('unverified');
     expect(verifyCheckout(checkout,{tradeId:'trade_123',status:1},checkout.expirationTime).kind).toBe('expired');
   });

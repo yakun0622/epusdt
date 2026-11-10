@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, auth, ApiError, type Profile, session } from './api';
+import { auth, ApiError, type Profile, session } from './api';
 import { safeRedirect, signInPath, type PageId } from './app/routes';
 import { useBrowserRoute } from './app/use-browser-route';
 import { AdminLayout } from './layouts/admin-layout';
@@ -11,6 +11,9 @@ import { WalletsPage } from './features/wallets/wallets-page';
 import { ApiKeysPage } from './features/keys/api-keys-page';
 import { ChainsPage } from './features/networks/chains-page';
 import { RpcPage } from './features/networks/rpc-page';
+import { SettingsPage } from './features/operations/settings-page';
+import { DashboardPage } from './features/operations/dashboard-page';
+import type { SettingsPage as SettingsSection } from './api/endpoints/settings';
 import { Button, Card, LoadingState, PreferencesControls, TextField, ToastProvider } from './components/ui';
 import { I18nProvider, useI18n } from './i18n/i18n-provider';
 import type { MessageKey } from './i18n/messages';
@@ -57,8 +60,6 @@ function App() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<unknown>(null);
-  const [loadingData, setLoadingData] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -73,24 +74,6 @@ function App() {
       }).finally(() => { if (alive) setChecking(false); });
     return () => { alive = false; };
   }, [tokenPresent, route.public, route.page]);
-
-  useEffect(() => {
-    if (!profile || route.public) return;
-    let alive = true;
-    setResult(null); setError('');
-    if (route.page !== 'dashboard') return;
-    setLoadingData(true);
-    const endpoint = '/dashboard/overview';
-    api<unknown>(endpoint).then(data => { if (alive) setResult(data); })
-      .catch(e => {
-        if (!alive) return;
-        if (e instanceof ApiError && e.status === 401) {
-          setProfile(null); setTokenPresent(false);
-        } else setError(e instanceof Error ? e.message : t('common.error'));
-      })
-      .finally(() => { if (alive) setLoadingData(false); });
-    return () => { alive = false; };
-  }, [profile, route.page, route.public, t]);
 
   useEffect(() => {
     if (checking || route.public || profile) return;
@@ -115,7 +98,7 @@ function App() {
     clearSession();
   }
   function clearSession() {
-    session.clear(); setTokenPresent(false); setProfile(null); setResult(null); setError('');
+    session.clear(); setTokenPresent(false); setProfile(null); setError('');
     navigate('/sign-in', true);
   }
   const go = (to: string) => { setError(''); navigate(to); };
@@ -154,7 +137,12 @@ function App() {
     </PublicPage>;
   if (!profile) return <main className="center"><LoadingState label={t('auth.checking')}/></main>;
 
-  const section = route.page === 'dashboard';
+  const settingsSection: SettingsSection | null = route.page === 'settings' ? 'system' :
+    route.page === 'settings-system' ? 'system' :
+    route.page === 'settings-telegram' ? 'telegram' :
+    route.page === 'settings-pay' ? 'pay' :
+    route.page === 'settings-epay' ? 'epay' :
+    route.page === 'settings-okpay' ? 'okpay' : null;
   return <AdminLayout pathname={route.pathname} title={t(titles[route.page] ?? 'app.console')}
     user={profile} onNavigate={go} onLogout={logout}>
     {error && <p role="alert" className="error">{error}</p>}
@@ -165,10 +153,8 @@ function App() {
       route.page === 'keys' ? <ApiKeysPage/> :
       route.page === 'chains' ? <ChainsPage/> :
       route.page === 'rpc' ? <RpcPage/> :
-      section ? (loadingData ? <LoadingState label={t('common.loading')}/> :
-        <Card><p className="muted">{t('pages.apiPreview')}</p>
-          <pre>{JSON.stringify(result, null, 2)}</pre>
-        </Card>) :
+      route.page === 'dashboard' ? <DashboardPage/> :
+      settingsSection ? <SettingsPage section={settingsSection} onNavigate={go}/> :
         <Card><p className="muted">{t('pages.unimplemented')}</p></Card>}
   </AdminLayout>;
 }

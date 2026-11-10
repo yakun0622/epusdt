@@ -590,6 +590,13 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 	if network == mdb.PaymentProviderOkPay {
 		return switchToOkPay(parent, token)
 	}
+	// OkPay records network=tron and receive_address=OKPAY for settlement,
+	// but they are not on-chain Tron wallets. In particular, the generic
+	// same-token/network fast path must never silently reuse an OkPay order
+	// as a chain payment, or treat OKPAY as a receiving address.
+	if parent.PayProvider == mdb.PaymentProviderOkPay {
+		return nil, constant.PaymentProviderNotSupport
+	}
 
 	if parent.Status == mdb.StatusWaitSelect {
 		return completeWaitSelectOrder(parent, token, network)

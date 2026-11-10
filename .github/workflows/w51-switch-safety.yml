@@ -1,0 +1,34 @@
+name: W51 public switch safety (Go)
+
+on:
+  push:
+    branches:
+      - master
+      - 'feat/**'
+    paths:
+      - 'src/model/service/order_service.go'
+      - 'src/model/service/w51_switch_guard_test.go'
+      - 'src/controller/comm/order_controller.go'
+      - '.github/workflows/w51-switch-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  switch-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Verify parent/child/order status safety and Go compile
+        working-directory: src
+        run: |
+          go test ./model/service -run 'TestW51|TestSwitchNetworkAfterWaitSelectCompletionUsesExistingSubOrderFlow|TestSwitchNetworkCompletesWaitSelectPlaceholderInPlace' -count=1 -v
+          go test ./controller/comm -run TestNoMatchingTestsForCompile -count=1

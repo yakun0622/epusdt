@@ -17,6 +17,10 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 
 `EPUSDT_BACKEND` 指向 Go 后端，Vite 已代理 `/admin/api`、`/pay`、`/payments`。构建输出只在 `web/dist`。
 
+## W53 付款 Hash 核验安全边界
+
+公共收银台现在可以验证已发生的链上交易证据，但只调用 `/pay/verify-tx-hash/:trade_id`，**不调用能够入账的 `/pay/submit-tx-hash/:trade_id`**。Go 核验结果不是支付成功，需继续等待权威订单状态。W54/W55 修复原结算幂等和父子单原子性后再评估正式上线。生产 `src/www` 不变。
+
 ## 当前进度
 
 - W10–W13：原版浏览器路径映射、JWT/公共支付请求分离、Go DTO/支付时间类型、基础 Vitest。

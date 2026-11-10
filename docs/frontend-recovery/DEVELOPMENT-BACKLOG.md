@@ -2,6 +2,17 @@
 
 > **当前状态（2026-11-10）**：W10～W16 的首轮代码、W20/W21 基础布局已落地，相关 Actions 编译及单元测试通过；浏览器对照/真实支付仍未完成，不能等同业务端到端验收。W14/W15/W16 详见本次交付记录。任务 ID 用于后续在 master 上按切片推进和追踪；建议一次提交一个完整切片，避免大范围一次性重构。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
 
+## 2026-11-10：W35 API Key 管理与密钥保护（首批完成）
+
+- 真实 `/keys` 页面：`GET /api-keys` 数组列表、前端名称/PID 查询、创建、编辑 name/ip_whitelist/notify_url、状态 1/2、使用统计、按需查看 secret、轮换、软删除。
+- PID 全由后端自动分配，EPAY/GMPAY 通用。数据契约 `web/src/api/endpoints/api-keys.ts` 对列表做白名单字段投影，绝不把意外返回的 `secret_key` 收进列表对象。
+- 敏感操作：查看需确认后才调用 secret GET；轮换/删除要输入目标 PID 才能执行；删除明确警告可能破坏已有订单回调，轮换立即使旧凭据失效。新 secret 在独立弹窗默认遮蔽，60 秒/页面退到后台/关闭时清理内存引用，无 localStorage/sessionStorage/URL/日志/自动剪贴板写入。
+- 创建、查看、轮换请求设置 `cache:'no-store'`；Go 创建/查看/轮换三个响应增加 `Cache-Control: no-store, private, max-age=0` 等禁缓存头。**服务端数据库仍需持久保存 secret 用于签名验证**，不能理解为服务器不存密钥。
+- [Web Actions #42771312689](https://github.com/yakun0622/epusdt/actions/runs/42771312689)：TypeScript、Vitest **17 文件/52 测试**及 Vite 构建通过。
+- [Go Actions #42771397026](https://github.com/yakun0622/epusdt/actions/runs/42771397026)：创建/查看/轮换敏感响应共用禁缓存 helper 的专项测试通过。
+- 仍需 T29 浏览器 + 已登录测试后端联调，验证键盘关闭、60 秒自动隐藏、凭证轮换后商户调用和已有订单回调；**W31 未实施**，生产 `src/www` 未改。
+- 下一阶段建议 W40 + W41：Chain/ChainToken 目录与 RPC 节点管理、bool 状态和数值状态区分，RPC API Key 等敏感字段必须脱敏；再继续 W42。
+
 ## 2026-11-10：W33/W34 钱包管理实现并通过自动构建
 
 - **W33**：`web/src/features/wallets/wallets-page.tsx` 已接入真实 `/addresses` 路由：按网络/status=1,2/关键词服务端筛选；列表是 `Wallet[]`，显示 `order_count`、备注、来源、状态；支持新增、只修改备注（含清空）、1/2 启停与删除。每次成功写入后重新拉取后端数据。
@@ -134,4 +145,4 @@
 - 未通过项与回滚方式；
 - 明确声明是否动过 `src/www`、Go 和 CI。
 
-**当前最新顺序**：W35 API Key 管理与敏感字段安全验证 → W40/W41 Chains、Token、RPC → W42/W43 设置与仪表盘；W31 订单操作独立高风险验收，暂不接入；未通过真实浏览器和支付回归前禁止替换 src/www。
+**当前最新顺序**：W40/W41 Chains、ChainTokens 和 RPC（需加强凭证脱敏）→ W42/W43 设置与仪表盘 → W44；W31 订单操作独立高风险验收，暂不接入；未通过真实浏览器和支付回归前禁止替换 src/www。

@@ -31,15 +31,14 @@ jobs:
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
-      - name: Test sensitive setting filtering
+      - name: Test sensitive setting filtering and MySQL buckets
         working-directory: src
         run: |
           go test ./model/data -run TestSensitiveSettingKeysIncludePaymentAndTelegramTokens -count=1 -v
           go test ./model/data -run TestStatsBucketExprMySQL57 -count=1 -v
-      - name: Compile dashboard and authenticated RPC snapshot route
+      - name: Test redacted settings and dashboard compilation
         working-directory: src
         run: |
           go test ./controller/admin -run TestRateStatusRedactedSnapshotOmitsCredentialURLsAndErrors -count=1 -v
           go test ./controller/admin -run TestSettingsURLRedactionDropsQueryPathAndCredentials -count=1 -v
-          go test ./controller/admin ./route -run '^
-
+          go test ./controller/admin ./route -run TestNoMatchingTestsForCompile -count=1

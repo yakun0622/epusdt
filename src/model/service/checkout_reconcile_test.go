@@ -78,3 +78,37 @@ func TestW52MissingOrderFailsClosed(t *testing.T){
 	_,err:=GetCheckoutReconciliation("absent_w52")
 	if err!=ErrOrder {t.Fatalf("missing order: %v",err)}
 }
+
+func TestW52ParentCannotClaimPaidWhileSelectedChildUnsettled(t *testing.T) {
+	cleanup:=testutil.SetupTestDatabases(t);defer cleanup()
+	root:=W52Order("w52_parent_disagree","w52_parent_disagree_id",mdb.StatusPaySuccess)
+	if err:=dao.Mdb.Create(root).Error;err!=nil {t.Fatal(err)}
+	child:=W52Order("w52_waiting_child","w52_waiting_child_id",mdb.StatusWaitPay)
+	child.ParentTradeId=root.TradeId
+	if err:=dao.Mdb.Create(child).Error;err!=nil {t.Fatal(err)}
+	view,err:=GetCheckoutReconciliation(root.TradeId)
+	if err!=nil {t.Fatal(err)}
+	if !view.RequiresReview || view.RelatedTradeID!=child.TradeId {
+		t.Fatalf("paid parent with active child must require review: %+v",view)
+	}
+}
+func TestW52PendingProviderDoesNotMarkPaidAndProviderMissingRequiresReview(t *testing.T) {
+	cleanup:=testutil.SetupTestDatabases(t);defer cleanup()
+	root:=W52Order("w52_okpay_pending","w52_okpay_pending_id",mdb.StatusWaitPay)
+	root.PayProvider=mdb.PaymentProviderOkPay
+	root.ReceiveAddress="OKPAY"
+	if err:=dao.Mdb.Create(root).Error;err!=nil {t.Fatal(err)}
+	missing,err:=GetCheckoutReconciliation(root.TradeId)
+	if err!=nil {t.Fatal(err)}
+	if missing.PaidConfirmed || missing.ProviderStatus!="missing" || !missing.RequiresReview {
+		t.Fatalf("missing provider should be flagged: %+v",missing)
+	}
+	row:=&mdb.ProviderOrder{TradeId:root.TradeId,Provider:mdb.PaymentProviderOkPay,
+		Status:mdb.ProviderOrderStatusPending,PayURL:"https://provider/?secret=PRIVATE"}
+	if err:=dao.Mdb.Create(row).Error;err!=nil {t.Fatal(err)}
+	pending,err:=GetCheckoutReconciliation(root.TradeId)
+	if err!=nil {t.Fatal(err)}
+	if pending.PaidConfirmed || pending.RequiresReview || pending.ProviderStatus!="pending" {
+		t.Fatalf("local pending status is not proof of paid: %+v",pending)
+	}
+}

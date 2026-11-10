@@ -194,8 +194,10 @@ func (c *BaseAdminController) UpsertSettings(ctx echo.Context) error {
 		"system.telegram_payment_notice_enabled":  true,
 		"system.telegram_abnormal_notice_enabled": true,
 	}
-	for _, item := range req.Items {
-		if telegramKeys[strings.TrimSpace(item.Key)] {
+	for index, item := range req.Items {
+		// A partial HTTP 200 may contain rejected Telegram rows. Reload
+		// integrations only for a successfully persisted Telegram key.
+		if index < len(out) && out[index].OK && telegramKeys[strings.TrimSpace(item.Key)] {
 			telegram.ReloadBotAsync("settings upsert")
 			go dao.SyncTelegramChannelFromSettings()
 			break
@@ -294,7 +296,23 @@ type RateRefreshRequest struct {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/settings/rate/status [get]
 func (c *BaseAdminController) RateStatus(ctx echo.Context) error {
-	return c.SucJson(ctx, config.GetRateStatus())
+	status := config.GetRateStatus()
+	if ctx.QueryParam("redact") == "1" {
+		status = redactRateStatus(status)
+	}
+	return c.SucJson(ctx, status)
+}
+
+// redactRateStatus protects provider credentials embedded in source URLs or
+// error text. Existing clients without redact=1 keep the old API shape.
+func redactRateStatus(status config.RateStatus) config.RateStatus {
+	status.APIURL = ""
+	status.Bases = append([]config.RateBaseStatus(nil), status.Bases...)
+	for i := range status.Bases {
+		status.Bases[i].SourceURL = ""
+		status.Bases[i].LastError = ""
+	}
+	return status
 }
 
 // RefreshRates forces one or more base-currency cache refreshes.

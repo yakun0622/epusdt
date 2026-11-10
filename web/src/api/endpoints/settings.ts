@@ -223,7 +223,7 @@ export function decodeRateRefresh(value:unknown):RateRefreshRow[] {
 }
 export const ratesApi={
   status:async(signal?:AbortSignal):Promise<RateStatus>=>
-    decodeRateStatus(await adminClient.json<unknown>('/settings/rate/status',{signal,cache:'no-store'})),
+    decodeRateStatus(await adminClient.json<unknown>('/settings/rate/status?redact=1',{signal,cache:'no-store'})),
   refresh:async():Promise<RateRefreshRow[]>=>
     decodeRateRefresh(await adminClient.postJson<unknown>('/settings/rate/refresh',{bases:[]})),
 };

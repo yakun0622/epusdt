@@ -87,3 +87,15 @@ describe('W42 rate cache: no token-bearing URLs in UI state',()=>{
     expect(()=>decodeRateRefresh({ok:true})).toThrow();
   });
 });
+
+describe('rate snapshot requests server-side redaction',()=>{
+  it('uses redact=1 so provider URL secrets do not cross the wire',async()=>{
+    const fetcher=vi.fn<typeof fetch>().mockImplementation(async()=>ok({
+      mode:'fixed',api_url:'',cache_ttl_seconds:300,bases:[],
+    }));
+    vi.stubGlobal('fetch',fetcher);
+    const {ratesApi}=await import('./settings');
+    await ratesApi.status();
+    expect(fetcher.mock.calls[0][0]).toBe('/admin/api/v1/settings/rate/status?redact=1');
+  });
+});

@@ -10,6 +10,8 @@ on:
       - 'src/model/data/order_data_stats.go'
       - 'src/model/data/order_stats_mysql_test.go'
       - 'src/controller/admin/dashboard_controller.go'
+      - 'src/controller/admin/settings_controller.go'
+      - 'src/controller/admin/settings_redaction_test.go'
       - 'src/route/router.go'
       - '.github/workflows/dashboard-settings-security.yml'
   workflow_dispatch:
@@ -36,4 +38,7 @@ jobs:
           go test ./model/data -run TestStatsBucketExprMySQL57 -count=1 -v
       - name: Compile dashboard and authenticated RPC snapshot route
         working-directory: src
-        run: go test ./controller/admin ./route -run '^$'
+        run: |
+          go test ./controller/admin -run TestRateStatusRedactedSnapshotOmitsCredentialURLsAndErrors -count=1 -v
+          go test ./controller/admin ./route -run '^
+

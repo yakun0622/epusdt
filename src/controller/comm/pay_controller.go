@@ -78,6 +78,23 @@ func (c *BaseCommController) CheckStatus(ctx echo.Context) (err error) {
 	return c.SucJson(ctx, resp)
 }
 
+// CheckoutReconciliation reports local parent/child and provider-ledger
+// state without changing orders or calling the payment provider. A provider
+// row marked "paid" is NOT proof of merchant settlement.
+// @Summary      Read-only cashier reconciliation state
+// @Description  Status 1=pending, 2=paid, 3=expired, 4=selection. paid_confirmed requires the authoritative orders row (and parent for a child). provider_status is the local callback ledger only, NOT a live OkPay query.
+// @Tags         Payment
+// @Produce      json
+// @Param        trade_id path string true "Trade ID"
+// @Success      200 {object} response.ApiResponse{data=response.CheckoutReconcileResponse}
+// @Router       /pay/reconcile-status/{trade_id} [get]
+func (c *BaseCommController) CheckoutReconciliation(ctx echo.Context) error {
+	ctx.Response().Header().Set("Cache-Control","no-store")
+	resp, err := service.GetCheckoutReconciliation(ctx.Param("trade_id"))
+	if err != nil { return c.FailJson(ctx,err) }
+	return c.SucJson(ctx,resp)
+}
+
 // SubmitTxHash 手动提交交易 hash 补单
 // @Summary      Submit transaction hash
 // @Description  Submit an on-chain transaction hash from the cashier. The hash is verified against the waiting order and, when valid, the same manual payment processing path used by admin mark-paid is executed. Expired orders and OkPay/provider orders are not supported.

@@ -33,6 +33,7 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - W44：Display 品牌只读预览、Notifications 实际 Telegram 渠道与脱敏、Integrations 真实接入状态只读页、Help 文档、Install 只读说明。Webhook/Email 暂无发送器。
 - W50：公共 `/cashier/:trade_id` 只读订单信息、最新状态二次校验、到期时间与链上收款信息安全展示；仅调用 `/pay/checkout-counter-resp/:trade_id` 和 `/pay/check-status/:trade_id` 两个 GET，不发起支付或创建订单。
 - W51：公开 `/payments/gmpay/v1/config` 支付方式矩阵，链上 Token/网络和 OkPay 选择；`/pay/switch-network` 显式确认+单次提交、竞态前后复核，父单最多一子单，未知供应商响应阻断重试。新增 Go `can_switch` 与 OkPay 防重复创建；不自动打开供应商链接。
+- W52：真实只读 `/pay/reconcile-status/:trade_id` 本地订单/OkPay 账本关联状态；收银台三 GET 验证、5 秒轮询及网络失败退避、活动子单跳转、服务器未确认到期或付款时保持待核实。
 
 当前 Dashboard 已使用真实 Go 接口展示订单/RPC 指标；`/orders` 是只读订单表格/CSV，`/addresses` 已恢复钱包管理，System/Telegram/Pay/EPAY/OkPay 配置页已接入。支付方式切换/链上回调完整流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
 
@@ -86,3 +87,7 @@ JWT 存储为浏览器可读 Cookie，是原版行为，不提供 HttpOnly 保�
 ## W51 支付方式和网络切换
 
 见 `docs/frontend-recovery/W51-IMPLEMENTATION.md`。W51 起收银台有用户明确确认的 `/pay/switch-network` 写接口，可能预留地址或创建真实 OkPay 订单；与 W50 的只读限制不同。注意 `MaxSubOrders=1`、父/子单 `trade_id` 变化、第三方链接不自动跳转以及业务错误码 10010 仅表示状态冲突。需要生产级联调和运维对账能力才可上线。W31 不实施，`src/www` 保持不变。
+
+## W52 支付状态对账与轮询
+
+详见 `docs/frontend-recovery/W52-IMPLEMENTATION.md`。OkPay 对账仅与本地已经记录的通知/订单状态对照，不是外部供应商实时查单，也不会重试创建供应商订单或自动补单。支付状态必须由 Go 的 SQL 订单结算及父子归属决定；错误码 10010 是状态冲突，不能冒充超时。开发测试和构建通过后仍不能直接发布收银台，需真实浏览器、回调、网络和资金安全验收。W31 不实施，生产 `src/www` 不变。

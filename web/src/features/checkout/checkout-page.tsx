@@ -1,12 +1,13 @@
 import {useCallback,useEffect,useMemo,useState} from 'react';
-import {checkoutApi,validTradeId,verifyCheckout,type CheckoutView,type CheckoutStatusView} from '../../api/endpoints/checkout';
+import {validTradeId} from '../../api/endpoints/checkout';
+import {reconciliationApi,evaluateCashier,stopCashierPolling,nextCashierPollDelay,
+  classifyStatusReadError,type VerifiedCashierSnapshot} from '../../api/endpoints/reconciliation';
 import {Button} from '../../components/ui';
 import {PaymentSelector,switchMessageKey} from './payment-selector';
 import type {SwitchProblem} from '../../api/endpoints/payment-switch';
 import {useI18n} from '../../i18n/i18n-provider';
 import {checkoutLabel,type CheckoutKey} from './i18n';
 
-type Loaded={checkout:CheckoutView;status:CheckoutStatusView;receivedAt:number};
 function formatDate(millis:number,locale:string):string {
   return new Intl.DateTimeFormat(locale,{dateStyle:'medium',timeStyle:'medium'}).format(new Date(millis));
 }
@@ -16,11 +17,12 @@ function formatNumber(value:number,locale:string,precision=8):string {
 export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(path:string)=>void}) {
   const {locale}=useI18n();
   const t=useCallback((key:CheckoutKey)=>checkoutLabel(locale,key),[locale]);
-  const [snapshot,setSnapshot]=useState<Loaded|null>(null);
+  const [snapshot,setSnapshot]=useState<VerifiedCashierSnapshot|null>(null);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
   const [revision,setRevision]=useState(0);
   const [clock,setClock]=useState(0);
+  const [failures,setFailures]=useState(0);
   const [switching,setSwitching]=useState(false);
   const [switchProblem,setSwitchProblem]=useState<SwitchProblem|null>(null);
   const [uncertain,setUncertain]=useState(false);
@@ -31,21 +33,38 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
     }
     let active=true;const abort=new AbortController();
     setLoading(true);setError('');setSnapshot(null);
-    // Both independent public GET endpoints must succeed and agree on trade_id.
-    // Never retain an old payment destination after a failed refresh.
-    Promise.all([checkoutApi.details(tradeId,abort.signal),checkoutApi.status(tradeId,abort.signal)])
-      .then(([checkout,status])=>{
-        if(active)setSnapshot({checkout,status,receivedAt:performance.now()});
-      }).catch(()=>{
-        if(active&&!abort.signal.aborted){setSnapshot(null);setError(t('failed'));}
-      }).finally(()=>{if(active)setLoading(false);});
+    // Do not use a cached address or a previous paid label while verifying.
+    reconciliationApi.snapshot(tradeId,abort.signal)
+      .then(next=>{if(active){setSnapshot(next);setFailures(0);}})
+      .catch(cause=>{if(active&&!abort.signal.aborted){
+        setSnapshot(null);setFailures(n=>n+1);
+        const kind=classifyStatusReadError(cause);
+        setError(kind==='conflict'?t('reconConflict'):
+          kind==='missing'?t('invalidOrder'):t('failed'));
+      }}).finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;abort.abort();};
   },[tradeId,revision,t]);
+  // Network failure must never permanently stop status polling: retry GETs
+  // with bounded backoff. Only confirmed terminal SQL states stop polling.
   useEffect(()=>{
-    if(!snapshot||switching||snapshot.status.status===2||snapshot.status.status===3)return;
-    const id=window.setInterval(()=>setRevision(v=>v+1),15000);
-    return()=>window.clearInterval(id);
-  },[snapshot,switching]);
+    if(!validTradeId(tradeId)||switching||loading)return;
+    const state=evaluateCashier(snapshot,snapshot?.reconciliation.serverTime??null);
+    if(stopCashierPolling(state))return;
+    const delay=nextCashierPollDelay(failures);
+    const timer=window.setTimeout(()=>setRevision(v=>v+1),delay);
+    return()=>window.clearTimeout(timer);
+  },[tradeId,revision,snapshot,loading,failures,switching]);
+  // Reconnect/focus performs a fresh read; it never retries payment writes.
+  useEffect(()=>{
+    const reload=()=>{if(!document.hidden && navigator.onLine) setRevision(v=>v+1);};
+    const visible=()=>{if(!document.hidden)reload();};
+    window.addEventListener('online',reload);
+    document.addEventListener('visibilitychange',visible);
+    return()=>{
+      window.removeEventListener('online',reload);
+      document.removeEventListener('visibilitychange',visible);
+    };
+  },[tradeId]);
   useEffect(()=>{
     if(!snapshot)return;
     const id=window.setInterval(()=>setClock(v=>v+1),1000);
@@ -54,9 +73,9 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
 
   // serverTime is milliseconds. Elapsed time is measured from a monotonic
   // clock, not from a possibly inaccurate client wall clock.
-  const serverNow=snapshot?snapshot.checkout.serverTime+
+  const serverNow=snapshot?snapshot.reconciliation.serverTime+
     Math.max(0,performance.now()-snapshot.receivedAt):null;
-  const view=verifyCheckout(snapshot?.checkout??null,snapshot?.status??null,serverNow);
+  const view=evaluateCashier(snapshot,serverNow);
   const checkout=snapshot?.checkout??null;
   const remaining=checkout&&serverNow!==null?
     Math.max(0,Math.ceil((checkout.expirationTime-serverNow)/1000)):0;
@@ -66,12 +85,16 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
   const onchain=!switching&&view.kind==='payment'&&view.payment==='onchain'&&checkout;
   const canChoose=Boolean(checkout&&snapshot&&serverNow!==null&&
     !error&&!loading&&(view.kind==='choose'||view.kind==='payment')&&
-    checkout.canSwitch&& !checkout.hasHostedPaymentLink&&
+    checkout.canSwitch&&
+    !snapshot?.reconciliation.relatedTradeId&& !checkout.hasHostedPaymentLink&&
     checkout.receiveAddress.trim().toUpperCase()!=='OKPAY'&&
     serverNow<checkout.expirationTime);
   const statusLabel=useMemo(()=>{
     switch(view.kind){
       case 'paid':return t('paid');
+      case 'review':return t('reconReview');
+      case 'elapsed':return t('reconElapsed');
+      case 'selected-child':return t('reconChild');
       case 'expired':return t('expired');
       case 'choose':return t('choose');
       case 'payment':return t('waiting');
@@ -105,6 +128,20 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
         <div className={'checkout-state checkout-state--'+view.kind} role="status">{switching?t('selecting'):statusLabel}</div>
         {switchProblem&&<p role="alert" className="checkout-alert">{t(switchMessageKey(switchProblem))}</p>}
         {uncertain&&<p role="alert" className="warning">{t('selectBlocked')}</p>}
+        {view.kind==='review'&&<p className="checkout-alert" role="alert">{t('reconReviewHint')}</p>}
+        {view.kind==='elapsed'&&<p className="checkout-alert" role="status">{t('reconElapsedHint')}</p>}
+        {view.kind==='selected-child'&&<div className="checkout-alert" role="note">
+          <p>{t('reconChildHint')}</p>
+          <p><code>{view.childTradeId}</code></p>
+          <Button variant="secondary" disabled={!onNavigate}
+            onClick={()=>onNavigate?.('/cashier/'+encodeURIComponent(view.childTradeId))}>
+            {t('reconOpenChild')}
+          </Button>
+        </div>}
+        {snapshot?.reconciliation.provider==='okpay'&&
+          <p className="muted checkout-provider-state">{t('reconProviderLocal')}
+            {' · '}{snapshot.reconciliation.providerStatus}
+          </p>}
         <dl className="checkout-fields">
           <div><dt>{t('amount')}</dt>
             <dd>{formatNumber(checkout.amount,locale,8)} {checkout.currency}</dd></div>
@@ -132,7 +169,7 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
         {view.kind==='choose'&&<p className="checkout-alert">{t('chooseHint')}</p>}
         {view.kind==='awaiting-details'&&
           <p className="checkout-alert" role="note">{t('paymentUnavailable')}</p>}
-        {view.kind==='payment'&&!switching&&<p className="muted">{t('noAuto')}</p>}
+        {view.kind==='payment'&&!switching&&<p className="muted">{t('reconPolling')}</p>}
         {canChoose&&snapshot&&serverNow!==null&&<PaymentSelector
           initial={{checkout:snapshot.checkout,status:snapshot.status}}
           serverNow={serverNow} disabled={uncertain} busy={switching}
@@ -140,5 +177,6 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
           onResolved={onSwitchResolved} onFailure={onSwitchFailure}/>}
       </div>:<p role="alert">{t('offline')}</p>}
     <p className="muted checkout-boundary">{t('noWrites')}</p>
+    <p className="muted checkout-boundary">{t('reconNoRemote')}</p>
   </section>;
 }

@@ -321,3 +321,9 @@ pre{background:var(--muted);color:var(--foreground);padding:18px;border-radius:c
 .checkout-method-controls>.ui-button{align-self:end}
 .checkout-selector-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:16px}
 @media(max-width:760px){.checkout-method-controls{grid-template-columns:1fr}}
+
+/* W52: conservative reconciliation and local provider-ledger statuses */
+.checkout-state--review,.checkout-state--elapsed{color:var(--muted-foreground);border-style:dashed}
+.checkout-state--selected-child{color:var(--foreground)}
+.checkout-provider-state{font-size:.75rem;overflow-wrap:anywhere}
+.checkout-page .checkout-alert code{overflow-wrap:anywhere}

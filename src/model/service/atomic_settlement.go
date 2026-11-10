@@ -25,6 +25,9 @@ func settlementTxID(network, provider, transaction string) string {
 		if manualBlockTransactionIDIsHex(network) {
 			transaction = strings.TrimPrefix(strings.TrimPrefix(transaction,"0x"),"0X")
 			transaction = strings.ToLower(transaction)
+			// Tron stores the bare hex transaction ID; Aptos and EVM
+			// keep the canonical 0x prefix used by their RPC scanners.
+			if !strings.EqualFold(network,mdb.NetworkTron) { transaction = "0x"+transaction }
 		}
 	}
 	return transaction
@@ -68,7 +71,9 @@ func lockSettlementOrder(tx *gorm.DB, tradeID string) (*mdb.Orders,error) {
 func legacyTxAlreadyUsed(tx *gorm.DB, order *mdb.Orders, canonical string) (bool,error) {
 	var n int64
 	candidates := equivalentManualBlockTransactionIDs(order.Network,canonical)
-	q := tx.Model(&mdb.Orders{}).Where("block_transaction_id != ''")
+	// Historical paid orders may have been soft-deleted by an admin.
+	// Never allow their transaction IDs to be claimed a second time.
+	q := tx.Unscoped().Model(&mdb.Orders{}).Where("block_transaction_id != ''")
 	if order.PayProvider == "" || order.PayProvider == mdb.PaymentProviderOnChain {
 		q = q.Where("(pay_provider = ? OR pay_provider = '' OR pay_provider IS NULL)",mdb.PaymentProviderOnChain)
 		if manualBlockTransactionIDIsHex(order.Network) {

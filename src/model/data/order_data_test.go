@@ -87,9 +87,21 @@ func TestStatsBucketExprForDialect(t *testing.T) {
 	}
 }
 
-func TestStatsBucketExprRejectsUnsupportedDialect(t *testing.T) {
-	if _, err := statsBucketExprForDialect("mysql", "created_at", false); err == nil {
-		t.Fatal("expected unsupported mysql dialect error")
+func TestStatsBucketExprSupportsMySQL57AndRejectsUnknownDialect(t *testing.T) {
+	for _, tc := range []struct {
+		hourly bool
+		want string
+	}{
+		{false, "DATE_FORMAT(created_at, '%Y-%m-%d')"},
+		{true, "DATE_FORMAT(created_at, '%Y-%m-%d %H:00')"},
+	} {
+		got, err := statsBucketExprForDialect("mysql", "created_at", tc.hourly)
+		if err != nil || got != tc.want {
+			t.Fatalf("MySQL 5.7 bucket=%q, err=%v, want=%q", got, err, tc.want)
+		}
+	}
+	if _, err := statsBucketExprForDialect("unsupported", "created_at", false); err == nil {
+		t.Fatal("expected unknown database dialect error")
 	}
 }
 

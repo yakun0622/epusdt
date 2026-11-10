@@ -9,6 +9,8 @@ import { AppearancePage } from './features/settings/appearance-page';
 import { OrdersPage } from './features/orders/orders-page';
 import { WalletsPage } from './features/wallets/wallets-page';
 import { ApiKeysPage } from './features/keys/api-keys-page';
+import { ChainsPage } from './features/networks/chains-page';
+import { RpcPage } from './features/networks/rpc-page';
 import { Button, Card, LoadingState, PreferencesControls, TextField, ToastProvider } from './components/ui';
 import { I18nProvider, useI18n } from './i18n/i18n-provider';
 import type { MessageKey } from './i18n/messages';
@@ -161,6 +163,8 @@ function App() {
       route.page === 'orders' ? <OrdersPage location={location} onNavigate={go}/> :
       route.page === 'addresses' ? <WalletsPage location={location} onNavigate={go}/> :
       route.page === 'keys' ? <ApiKeysPage/> :
+      route.page === 'chains' ? <ChainsPage/> :
+      route.page === 'rpc' ? <RpcPage/> :
       section ? (loadingData ? <LoadingState label={t('common.loading')}/> :
         <Card><p className="muted">{t('pages.apiPreview')}</p>
           <pre>{JSON.stringify(result, null, 2)}</pre>

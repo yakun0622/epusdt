@@ -81,6 +81,14 @@ const allowedTypes = new Set<StoredSettingType>(['string', 'int', 'bool', 'json'
 export function settingsForPage(page: SettingsPage): SettingField[] {
   return settingFields.filter(field => field.page === page);
 }
+export function redactSettingsURL(value: string): string {
+  if (!value.trim()) return '';
+  try {
+    const parsed = new URL(value);
+    if (!parsed.hostname || !['http:', 'https:'].includes(parsed.protocol)) return '[configured URL hidden]';
+    return parsed.protocol + '//' + parsed.host;
+  } catch { return '[configured URL hidden]'; }
+}
 export function decodeSettings(payload: unknown): PublicSetting[] {
   if (!Array.isArray(payload)) throw new TypeError('Settings list must be an array');
   const output: PublicSetting[] = [];
@@ -93,7 +101,7 @@ export function decodeSettings(payload: unknown): PublicSetting[] {
     const field = fields.get(item.key);
     // Never copy unknown settings or secrets to React state, even on a broken Go server.
     if (!field || field.kind === 'secret' || field.group !== item.group) continue;
-    output.push({ key: item.key, value: item.value, group: item.group,
+    output.push({ key: item.key, value: item.key.endsWith('_url') ? redactSettingsURL(item.value) : item.value, group: item.group,
       type: item.type as StoredSettingType });
   }
   return output;
@@ -154,7 +162,7 @@ export function reconcileSettingsWrite(requested: readonly SettingWrite[], paylo
 }
 export const settingsApi = {
   list: async (signal?: AbortSignal): Promise<PublicSetting[]> =>
-    decodeSettings(await adminClient.json<unknown>('/settings', { signal, cache: 'no-store' })),
+    decodeSettings(await adminClient.json<unknown>('/settings?redact=1', { signal, cache: 'no-store' })),
   save: async (items: readonly SettingWrite[]): Promise<SaveSummary> => {
     if (!items.length) throw new TypeError('No modified settings');
     const raw = await adminClient.json<unknown>('/settings', {

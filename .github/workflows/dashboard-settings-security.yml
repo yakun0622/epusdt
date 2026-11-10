@@ -40,5 +40,6 @@ jobs:
         working-directory: src
         run: |
           go test ./controller/admin -run TestRateStatusRedactedSnapshotOmitsCredentialURLsAndErrors -count=1 -v
+          go test ./controller/admin -run TestSettingsURLRedactionDropsQueryPathAndCredentials -count=1 -v
           go test ./controller/admin ./route -run '^
 

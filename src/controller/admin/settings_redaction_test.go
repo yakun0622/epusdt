@@ -28,3 +28,16 @@ func TestRateStatusRedactedSnapshotOmitsCredentialURLsAndErrors(t *testing.T) {
 		t.Fatal("redaction must preserve rate data without mutating original")
 	}
 }
+
+func TestSettingsURLRedactionDropsQueryPathAndCredentials(t *testing.T) {
+  got := redactSettingsURL("https://user:pass@provider.example:8443/private/SECRET?token=SECRET")
+  if got != "https://provider.example:8443" {
+    t.Fatalf("unsafe settings URL projection")
+  }
+  if redactSettingsURL("not-a-valid-url") != "[configured URL hidden]" {
+    t.Fatal("unparseable URL must not be shown")
+  }
+  if redactSettingsURL("") != "" {
+    t.Fatal("unset URL must stay unset")
+  }
+}

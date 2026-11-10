@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeSettings, reconcileSettingsWrite, sensitiveKeys,
-  settingFields, settingsApi, validateSetting, decodeRateStatus, decodeRateRefresh } from './settings';
+  settingFields, settingsApi, validateSetting, decodeRateStatus, decodeRateRefresh, redactSettingsURL } from './settings';
 afterEach(() => vi.unstubAllGlobals());
 const ok = (data: unknown) => new Response(JSON.stringify({
   status_code: 200, message: 'success', data, request_id: '',
@@ -97,5 +97,16 @@ describe('rate snapshot requests server-side redaction',()=>{
     const {ratesApi}=await import('./settings');
     await ratesApi.status();
     expect(fetcher.mock.calls[0][0]).toBe('/admin/api/v1/settings/rate/status?redact=1');
+  });
+});
+
+describe('W42 config URL redaction',()=>{
+  it('only returns origins and drops tokenized paths, userinfo and queries',()=>{
+    expect(redactSettingsURL('https://u:p@rates.example:8443/auth/SECRET?token=SECRET'))
+      .toBe('https://rates.example:8443');
+    expect(decodeSettings([{
+      key:'rate.api_url',group:'rate',type:'string',
+      value:'https://rates.example/api?key=SECRET',
+    }])[0].value).toBe('https://rates.example');
   });
 });

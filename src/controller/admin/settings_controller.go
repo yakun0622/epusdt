@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,7 +92,27 @@ func (c *BaseAdminController) ListSettings(ctx echo.Context) error {
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
+	if ctx.QueryParam("redact") == "1" {
+		// URL paths, credentials and query values can contain API tokens.
+		// New UI gets scheme/host only. The old UI keeps legacy behavior.
+		for i := range rows {
+			if strings.HasSuffix(rows[i].Key, "_url") {
+				rows[i].Value = redactSettingsURL(rows[i].Value)
+			}
+		}
+	}
 	return c.SucJson(ctx, rows)
+}
+
+func redactSettingsURL(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+		return "[configured URL hidden]"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // UpsertSettings batch-inserts / updates rows. Each item is treated

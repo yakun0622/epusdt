@@ -21,14 +21,25 @@ import (
 // case-folds TON/Solana references or provider order IDs.
 func settlementTxID(network, provider, transaction string) string {
 	transaction = strings.TrimSpace(transaction)
-	if provider == "" || provider == mdb.PaymentProviderOnChain {
-		if manualBlockTransactionIDIsHex(network) {
-			transaction = strings.TrimPrefix(strings.TrimPrefix(transaction,"0x"),"0X")
-			transaction = strings.ToLower(transaction)
-			// Tron stores the bare hex transaction ID; Aptos and EVM
-			// keep the canonical 0x prefix used by their RPC scanners.
-			if !strings.EqualFold(network,mdb.NetworkTron) { transaction = "0x"+transaction }
+	if provider != "" && provider != mdb.PaymentProviderOnChain {
+		return transaction
+	}
+	if !manualBlockTransactionIDIsHex(network) {return transaction}
+	body := strings.TrimPrefix(strings.TrimPrefix(transaction, "0x"), "0X")
+	// Only normalize genuinely hexadecimal identifiers. Historical tests
+	// and records can contain opaque provider/scanner references; inventing
+	// a 0x prefix for an arbitrary string would change its identity.
+	if len(body) == 64 {
+		if _, err := hex.DecodeString(body); err == nil {
+			if strings.EqualFold(network,mdb.NetworkTron) {return strings.ToLower(body)}
+			return "0x" + strings.ToLower(body)
 		}
+	}
+	// Aptos (and EVM) can have short RPC test IDs with an explicit 0x
+	// prefix; preserve that prefix and its canonical lowercase spelling.
+	if !strings.EqualFold(network,mdb.NetworkTron) &&
+		(strings.HasPrefix(transaction,"0x") || strings.HasPrefix(transaction,"0X")) {
+		return "0x" + strings.ToLower(body)
 	}
 	return transaction
 }

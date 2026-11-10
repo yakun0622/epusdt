@@ -1,0 +1,36 @@
+name: W52 cashier reconciliation safety (Go)
+
+on:
+  push:
+    branches:
+      - master
+      - 'feat/**'
+    paths:
+      - 'src/model/service/checkout_reconcile.go'
+      - 'src/model/service/checkout_reconcile_test.go'
+      - 'src/model/response/checkout_reconcile_response.go'
+      - 'src/controller/comm/pay_controller.go'
+      - 'src/route/router.go'
+      - '.github/workflows/w52-cashier-reconciliation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-reconciliation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Test order and provider settlement projections
+        working-directory: src
+        run: |
+          go test ./model/service -run '^TestW52' -count=1 -v
+          go test ./controller/comm ./route -run TestNoMatchingTestsForCompile -count=1

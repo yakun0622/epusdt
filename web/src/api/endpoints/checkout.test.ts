@@ -49,6 +49,16 @@ describe('W50 public checkout API semantics and safety',()=>{
     expect(verifyCheckout(hosted,{tradeId:'trade_123',status:1},hosted.serverTime))
       .toMatchObject({kind:'payment',payment:'hosted',address:null});
   });
+  it('never displays the OKPAY provider marker as an on-chain wallet',()=>{
+    const hosted=decodePublicCheckout({...wire(),payment_url:'https://provider/?secret=HIDDEN',
+      receive_address:'OKPAY',network:'tron'},'trade_123');
+    expect(verifyCheckout(hosted,{tradeId:'trade_123',status:1},hosted.serverTime))
+      .toMatchObject({kind:'payment',payment:'hosted',address:null});
+    const noUrl=decodePublicCheckout({...wire(),payment_url:'',
+      receive_address:'OKPAY',network:'tron'},'trade_123');
+    expect(verifyCheckout(noUrl,{tradeId:'trade_123',status:1},noUrl.serverTime).kind)
+      .toBe('awaiting-details');
+  });
   it('uses only two unauthenticated no-store GET endpoints',async()=>{
     const f=vi.fn<typeof fetch>()
       .mockImplementationOnce(async()=>ok(wire()))

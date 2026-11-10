@@ -77,9 +77,13 @@ export function verifyCheckout(
   if(serverNow>=checkout.expirationTime)return {kind:'expired'};
   if(latest.status===4)return {kind:'choose'};
   if(checkout.statusAtCreation!==1)return {kind:'awaiting-details'};
+  // OkPay stores network=tron and receive_address=OKPAY. The provider
+  // hosted link takes precedence over any on-chain looking fields.
+  if(checkout.hasHostedPaymentLink)return {kind:'payment',payment:'hosted',address:null};
+  if(checkout.receiveAddress.trim().toUpperCase()==='OKPAY')
+    return {kind:'awaiting-details'};
   if(checkout.token.trim()&&checkout.network.trim()&&checkout.receiveAddress.trim()&&checkout.actualAmount>0)
     return {kind:'payment',payment:'onchain',address:checkout.receiveAddress};
-  if(checkout.hasHostedPaymentLink)return {kind:'payment',payment:'hosted',address:null};
   return {kind:'awaiting-details'};
 }
 export const checkoutApi={

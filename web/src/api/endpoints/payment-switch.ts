@@ -53,6 +53,12 @@ export function allowPaymentSelection(
     throw new SwitchPaymentError('stale');
   if (!isSupportedPaymentOption(options,choice.network,choice.token))
     throw new SwitchPaymentError('unsupported');
+  // Provider orders store network=tron internally and do not represent
+  // a usable on-chain address. Avoid the Go same-network short circuit,
+  // which would incorrectly reuse the provider parent for a chain request.
+  if (checkout.hasHostedPaymentLink ||
+      checkout.receiveAddress.trim().toUpperCase()==='OKPAY')
+    throw new SwitchPaymentError('provider');
   // Already selected on an on-chain parent: avoid needless POST. A provider's
   // actual network can be tron, so do not confuse it with on-chain selection.
   if (status.status === 1 && checkout.isSelected &&

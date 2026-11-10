@@ -39,6 +39,13 @@ describe('W51 one-shot network switching and server-authoritative reconciliation
     const race={checkout:parent.checkout,status:decodePublicStatus({trade_id:'parent_A',status:2},'parent_A')};
     expect(()=>allowPaymentSelection(race,opts,'ton','USDT',parent.checkout.serverTime)).toThrow();
   });
+  it('blocks switching away from a provider parent that has network=tron but address=OKPAY',()=>{
+    const parent=snapshot();
+    const hosted=decodePublicCheckout({...wire(),receive_address:'OKPAY',
+      network:'tron',payment_url:'https://provider/?token=SECRET'},'parent_A');
+    expect(()=>allowPaymentSelection({checkout:hosted,status:parent.status},
+      opts,'tron','USDT',hosted.serverTime)).toMatchObject({problem:'provider'});
+  });
   it('requires same initial and preflight snapshots; no POST after another tab changes order',()=>{
     expect(unchangedBeforeSwitch(snapshot(),snapshot())).toBe(true);
     expect(unchangedBeforeSwitch(snapshot(),snapshot(4))).toBe(false);

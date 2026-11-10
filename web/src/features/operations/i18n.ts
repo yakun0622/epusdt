@@ -1,5 +1,7 @@
 import type { Locale } from '../../i18n/locale';
 const english={
+"urlRedacted":"Only the URL host is shown to protect embedded tokens. Enter the complete URL to replace it.",
+
 "status":"Status",
 "close":"Close",
 "cancel":"Cancel",
@@ -89,6 +91,8 @@ export type OperationsKey=keyof typeof english;
 export const operationMessages:Record<Locale,Record<OperationsKey,string>>={
 'en-US':english,
 'zh-CN':{
+"urlRedacted":"仅显示 URL 主机以防泄露其中的 Token；若要修改，请重新输入完整 URL。",
+
 "status":"状态",
 "close":"关闭",
 "cancel":"取消",
@@ -110,6 +114,8 @@ export const operationMessages:Record<Locale,Record<OperationsKey,string>>={
 "network":"网络",
 "settingsTitle":"系统配置","system":"系统","telegram":"Telegram 通知","pay":"支付与汇率","epay":"EPAY 支付","okpay":"OkPay 支付","settingsHint":"只提交修改过的字段，未配置字段保持空白。","secretKeep":"保留当前凭证","secretReplace":"替换凭证","secretClear":"明确清除凭证","secretWarning":"敏感凭证不回显、不写入浏览器存储；替换或清除可能影响现有集成。","secretConfirm":"确认清除已配置的凭证","secretPlaceholder":"输入新凭证","save":"保存修改项","saving":"保存中…","reload":"从服务端重新加载","loading":"读取配置中…","success":"配置保存成功","partial":"部分配置失败，请查看逐项结果；HTTP 200 不代表全部成功。","failed":"保存失败","retryFailed":"重试失败的非敏感字段","reenterSecret":"失败的敏感凭证需重新输入，原输入已清空。","noChanges":"没有需要保存的修改","invalid":"配置值不合法","pendingResults":"逐项保存结果","successCount":"成功","failureCount":"失败","notConfigured":"尚未配置","boolTrue":"启用","boolFalse":"禁用","keep":"保持不变","refresh":"刷新","error":"请求失败","dashboardTitle":"实时仪表盘","dashboardInfo":"所有数值均来自后端真实接口，不使用演示数据。","today":"今天","sevenDays":"近 7 天","thirtyDays":"近 30 天","custom":"自定义","start":"开始时间","end":"结束时间","apply":"查询","orderCount":"订单数","successCountMetric":"成功支付订单","successRate":"支付成功率","expired":"超时未支付","avgPayment":"平均支付耗时","seconds":"秒","activeAddresses":"订单使用地址数","onlineChains":"启用网络数","noKpi":"暂无真实数据，请重试或检查后端。","mixedUnits":"后端 total_asset、volume、seven_day_volume 直接加总不同代币数量，不能视为同币种金额；本页不将其显示成资产或营收。","trendTitle":"分时订单统计","period":"时间区间","rpcTitle":"RPC 运行状态","rpcInfo":"RPC 计数来自进程内存，服务重启后清零；本页展示刷新时的快照而非实时推送。","rpcCalls":"RPC 调用","rpcFailures":"RPC 失败","rpcStatus":"状态","rpcBlock":"最新区块高度","lastSync":"最后同步","rpcNoSample":"暂无采样","rpcGenerated":"快照时间","disclaimer":"统计采用服务端时间窗口；成功率按 0–1 比例转换百分比，耗时单位为秒。"},
 'zh-TW':{
+"urlRedacted":"僅顯示 URL 主機避免洩漏 Token；修改時請重新輸入完整 URL。",
+
 "status":"狀態",
 "close":"關閉",
 "cancel":"取消",
@@ -131,6 +137,8 @@ export const operationMessages:Record<Locale,Record<OperationsKey,string>>={
 "network":"網路",
 "settingsTitle":"系統設定","system":"系統","telegram":"Telegram 通知","pay":"付款與匯率","epay":"EPAY 支付","okpay":"OkPay 支付","settingsHint":"僅提交已修改欄位，未設定欄位保持空白。","secretKeep":"保留現有憑證","secretReplace":"替換憑證","secretClear":"明確清除憑證","secretWarning":"敏感憑證不回顯、不寫入瀏覽器儲存；替換或清除可能影響現有串接。","secretConfirm":"確認清除已設定憑證","secretPlaceholder":"輸入新憑證","save":"儲存修改項","saving":"儲存中…","reload":"從伺服器重新載入","loading":"讀取設定中…","success":"設定已儲存","partial":"部分設定失敗，請查看逐項結果；HTTP 200 不代表全部成功。","failed":"儲存失敗","retryFailed":"重試失敗的非敏感欄位","reenterSecret":"失敗的敏感憑證需重新輸入，原輸入已清除。","noChanges":"沒有需要儲存的修改","invalid":"設定值無效","pendingResults":"逐項儲存結果","successCount":"成功","failureCount":"失敗","notConfigured":"尚未設定","boolTrue":"啟用","boolFalse":"停用","keep":"保持不變","refresh":"重新整理","error":"請求失敗","dashboardTitle":"即時儀表板","dashboardInfo":"所有數值皆來自後端真實介面，不使用示範資料。","today":"今天","sevenDays":"最近 7 天","thirtyDays":"最近 30 天","custom":"自訂","start":"開始時間","end":"結束時間","apply":"查詢","orderCount":"訂單數","successCountMetric":"成功付款訂單","successRate":"付款成功率","expired":"逾時未付款","avgPayment":"平均付款時間","seconds":"秒","activeAddresses":"訂單使用地址數","onlineChains":"啟用網路數","noKpi":"暫無真實資料，請重試或檢查後端。","mixedUnits":"後端 total_asset、volume、seven_day_volume 加總不同代幣數量，不能視為同幣種金額；本頁不顯示為資產或營收。","trendTitle":"分時訂單統計","period":"時間區間","rpcTitle":"RPC 運行狀態","rpcInfo":"RPC 計數來自程序記憶體，重啟後歸零；本頁顯示快照而非即時推送。","rpcCalls":"RPC 呼叫","rpcFailures":"RPC 失敗","rpcStatus":"狀態","rpcBlock":"最新區塊高度","lastSync":"最後同步","rpcNoSample":"暫無採樣","rpcGenerated":"快照時間","disclaimer":"統計採用伺服器時間窗口；成功率為 0–1 比例轉百分比，耗時單位是秒。"},
 'ja-JP':{
+"urlRedacted":"トークン保護のためホストのみ表示します。変更時は完全な URL を入力してください。",
+
 "status":"状態",
 "close":"閉じる",
 "cancel":"キャンセル",
@@ -152,6 +160,8 @@ export const operationMessages:Record<Locale,Record<OperationsKey,string>>={
 "network":"ネットワーク",
 "settingsTitle":"設定","system":"システム","telegram":"Telegram 通知","pay":"決済と為替","epay":"EPAY","okpay":"OkPay","settingsHint":"変更した項目のみ送信します。","secretKeep":"既存の認証情報を保持","secretReplace":"認証情報を変更","secretClear":"認証情報を消去","secretWarning":"秘密情報は表示・保存しません。変更は既存連携に影響します。","secretConfirm":"設定済みの認証情報を削除することを確認","secretPlaceholder":"新しいシークレット","save":"変更を保存","saving":"保存中…","reload":"サーバーから再読込","loading":"設定を読込中…","success":"設定を保存しました","partial":"一部の設定が失敗しました。HTTP 200 は全件成功ではありません。","failed":"保存失敗","retryFailed":"失敗した通常項目を再送","reenterSecret":"失敗した秘密情報は再入力してください。","noChanges":"変更はありません","invalid":"設定値が無効です","pendingResults":"項目別の結果","successCount":"成功","failureCount":"失敗","notConfigured":"未設定","boolTrue":"有効","boolFalse":"無効","keep":"変更しない","refresh":"更新","error":"リクエスト失敗","dashboardTitle":"ダッシュボード","dashboardInfo":"表示値はすべて実際の API から取得します。","today":"今日","sevenDays":"過去7日","thirtyDays":"過去30日","custom":"カスタム","start":"開始日時","end":"終了日時","apply":"適用","orderCount":"注文数","successCountMetric":"支払済の注文","successRate":"決済成功率","expired":"未支払の期限切れ","avgPayment":"平均支払時間","seconds":"秒","activeAddresses":"注文に使われたアドレス","onlineChains":"有効なネットワーク","noKpi":"データがありません。再試行してください。","mixedUnits":"異なるトークン単位の合算値は売上として表示しません。","trendTitle":"期間別注文統計","period":"期間","rpcTitle":"RPC 実行状況","rpcInfo":"再起動時にカウンターはリセットされます。","rpcCalls":"RPC 呼び出し","rpcFailures":"RPC 失敗","rpcStatus":"状態","rpcBlock":"最新ブロック","lastSync":"最終同期","rpcNoSample":"サンプルなし","rpcGenerated":"取得時刻","disclaimer":"サーバー時間を使用し、成功率を百分率に換算します。"},
 'ko-KR':{
+"urlRedacted":"토큰 보호를 위해 호스트만 표시합니다. 변경 시 전체 URL을 입력하세요.",
+
 "status":"상태",
 "close":"닫기",
 "cancel":"취소",
@@ -173,6 +183,8 @@ export const operationMessages:Record<Locale,Record<OperationsKey,string>>={
 "network":"네트워크",
 "settingsTitle":"설정","system":"시스템","telegram":"Telegram 알림","pay":"결제 및 환율","epay":"EPAY","okpay":"OkPay","settingsHint":"수정한 항목만 전송합니다.","secretKeep":"기존 비밀 유지","secretReplace":"비밀 교체","secretClear":"비밀 제거","secretWarning":"비밀은 표시하거나 브라우저에 저장하지 않습니다. 변경은 기존 연동에 영향을 줍니다.","secretConfirm":"기존 비밀 삭제에 동의합니다","secretPlaceholder":"새 비밀 입력","save":"변경 사항 저장","saving":"저장 중…","reload":"서버에서 다시 로드","loading":"설정 불러오는 중…","success":"설정 저장됨","partial":"일부 설정 실패. HTTP 200은 전체 성공을 의미하지 않습니다.","failed":"저장 실패","retryFailed":"실패한 일반 필드 재시도","reenterSecret":"실패한 비밀은 다시 입력해야 합니다.","noChanges":"변경된 항목 없음","invalid":"올바르지 않은 값","pendingResults":"항목별 결과","successCount":"성공","failureCount":"실패","notConfigured":"설정되지 않음","boolTrue":"활성화","boolFalse":"비활성화","keep":"변경 안 함","refresh":"새로고침","error":"요청 실패","dashboardTitle":"대시보드","dashboardInfo":"모든 수치는 실제 API에서 조회합니다.","today":"오늘","sevenDays":"최근 7일","thirtyDays":"최근 30일","custom":"사용자 지정","start":"시작","end":"종료","apply":"조회","orderCount":"주문 수","successCountMetric":"결제 완료 주문","successRate":"결제 성공률","expired":"만료 미결제","avgPayment":"평균 결제 시간","seconds":"초","activeAddresses":"주문에 사용된 주소","onlineChains":"활성 네트워크","noKpi":"실제 데이터 없음. 재시도하세요.","mixedUnits":"서로 다른 토큰 수량의 합산은 매출로 표시하지 않습니다.","trendTitle":"기간별 주문 통계","period":"기간","rpcTitle":"RPC 런타임 상태","rpcInfo":"서버 재시작 시 카운터 초기화. 스냅샷입니다.","rpcCalls":"RPC 호출","rpcFailures":"RPC 실패","rpcStatus":"상태","rpcBlock":"최신 블록","lastSync":"마지막 동기화","rpcNoSample":"샘플 없음","rpcGenerated":"스냅샷 시각","disclaimer":"서버 시간 기준, 성공률은 백분율, 소요 시간은 초 단위입니다."},
 'ru-RU':{
+"urlRedacted":"Для защиты токенов отображается только хост. Для изменения введите полный URL.",
+
 "status":"Статус",
 "close":"Закрыть",
 "cancel":"Отмена",

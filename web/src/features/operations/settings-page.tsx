@@ -164,11 +164,16 @@ export function SettingsPage({ section, onNavigate }: SettingsPageProps) {
           onChange={e=>edit(field.key,e.target.value)}/>
       </div>;
     }
-    return <TextField key={field.key} label={name}
+    const textField=<TextField label={name}
       type={field.kind==='number'?'number':'text'}
       min={field.min} max={field.max}
       step={field.kind==='number'&&field.type!=='int'?'any':undefined}
       value={value} onChange={e=>edit(field.key,e.target.value)}/>;
+    return field.key.endsWith('_url')
+      ? <div key={field.key} className="operations-url-field">
+          {textField}<small className="muted">{t('urlRedacted')}</small>
+        </div>
+      : <div key={field.key}>{textField}</div>;
   };
 
   return <div className="operations-settings">

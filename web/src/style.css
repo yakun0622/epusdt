@@ -272,3 +272,6 @@ pre{background:var(--muted);color:var(--foreground);padding:18px;border-radius:c
 @media(max-width:1060px){.operations-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:780px){.operations-fields{grid-template-columns:1fr}.operations-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:480px){.operations-metrics{grid-template-columns:1fr}.operations-range>.ui-field{flex:1 0 100%}.operations-tabs .ui-button{flex:1}}
+
+.operations-url-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.operations-url-field small{font-size:.73rem;line-height:1.45}

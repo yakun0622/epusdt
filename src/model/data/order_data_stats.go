@@ -46,6 +46,13 @@ func statsBucketExprForDialect(dialect, column string, hourly bool) (string, err
 			return fmt.Sprintf("replace(substr(%s, 1, 13), 'T', ' ') || ':00'", column), nil
 		}
 		return fmt.Sprintf("substr(%s, 1, 10)", column), nil
+	case "mysql":
+		// MySQL 5.7 supports DATE_FORMAT; keep the display key identical to
+		// the UTC/local day bucket representations used by the dashboard.
+		if hourly {
+			return fmt.Sprintf("DATE_FORMAT(%s, '%%Y-%%m-%%d %%H:00')", column), nil
+		}
+		return fmt.Sprintf("DATE_FORMAT(%s, '%%Y-%%m-%%d')", column), nil
 	case "postgres":
 		if hourly {
 			return fmt.Sprintf("TO_CHAR(%s, 'YYYY-MM-DD HH24:00')", column), nil

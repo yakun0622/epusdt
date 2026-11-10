@@ -11,7 +11,7 @@ const wire=(status:1|2|3|4=1)=>({
   receive_address:status===4?'':'TAddress',network:status===4?'':'tron',
   status,payment_type:'gmpay',created_at:1793746800000,
   server_time:1793747000000,expiration_time:1793750400000,
-  is_selected:status!==4,payment_url:'',redirect_url:'',
+  is_selected:status!==4,can_switch:true,payment_url:'',redirect_url:'',
 });
 const opts=decodePublicPaymentOptions({
   supported_assets:[{network:'tron',display_name:'TRON',tokens:['USDT']},
@@ -36,6 +36,7 @@ describe('W51 one-shot network switching and server-authoritative reconciliation
     expect(()=>allowPaymentSelection(snapshot(2),opts,'ton','USDT',parent.checkout.serverTime)).toThrow();
     expect(()=>allowPaymentSelection(snapshot(3),opts,'ton','USDT',parent.checkout.serverTime)).toThrow();
     expect(()=>allowPaymentSelection(parent,opts,'ton','TRX',parent.checkout.serverTime)).toThrow();
+    expect(()=>allowPaymentSelection({checkout:{...parent.checkout,canSwitch:false},status:parent.status},opts,'ton','USDT',parent.checkout.serverTime)).toThrow();
     const race={checkout:parent.checkout,status:decodePublicStatus({trade_id:'parent_A',status:2},'parent_A')};
     expect(()=>allowPaymentSelection(race,opts,'ton','USDT',parent.checkout.serverTime)).toThrow();
   });

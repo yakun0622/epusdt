@@ -6,7 +6,7 @@ const wire=(status:1|2|3|4=1)=>({
   token:status===4?'':'USDT',currency:'CNY',receive_address:status===4?'':'TVerified',
   network:status===4?'':'tron',status,payment_type:'gmpay',
   created_at:1793746800000,server_time:1793747000000,expiration_time:1793750400000,
-  is_selected:status!==4,redirect_url:'https://merchant/?secret=SECRET',
+  is_selected:status!==4,can_switch:true,redirect_url:'https://merchant/?secret=SECRET',
   payment_url:'',private_field:'SECRET',
 });
 const ok=(data:unknown)=>new Response(JSON.stringify({
@@ -38,6 +38,7 @@ describe('W50 public checkout API semantics and safety',()=>{
     expect(()=>decodePublicCheckout({...wire(),status:99},'trade_123')).toThrow();
     expect(()=>decodePublicCheckout({...wire(),actual_amount:-1},'trade_123')).toThrow();
     expect(()=>decodePublicCheckout({...wire(),is_selected:1},'trade_123')).toThrow();
+    expect(()=>decodePublicCheckout({...wire(),can_switch:'yes'},'trade_123')).toThrow();
     expect(()=>decodePublicStatus({trade_id:'trade_123',status:10010},'trade_123')).toThrow();
   });
   it('removes all unknown fields, merchant redirects and payment URL secrets',()=>{

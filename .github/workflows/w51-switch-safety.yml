@@ -7,6 +7,7 @@ on:
       - 'feat/**'
     paths:
       - 'src/model/service/order_service.go'
+      - 'src/model/response/pay_response.go'
       - 'src/model/service/w51_switch_guard_test.go'
       - 'src/controller/comm/order_controller.go'
       - '.github/workflows/w51-switch-safety.yml'

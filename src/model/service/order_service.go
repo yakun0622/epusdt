@@ -784,6 +784,8 @@ func buildCheckoutResponse(order *mdb.Orders) *response.CheckoutCounterResponse 
 		CreatedAt:      order.CreatedAt.TimestampMilli(),
 		ServerTime:     carbon.Now().TimestampMilli(),
 		IsSelected:     order.IsSelected,
+		CanSwitch:      order.ParentTradeId == "" && order.PayProvider != mdb.PaymentProviderOkPay &&
+			(order.Status == mdb.StatusWaitPay || order.Status == mdb.StatusWaitSelect),
 	}
 }
 

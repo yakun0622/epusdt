@@ -51,6 +51,7 @@ export function allowPaymentSelection(
     throw new SwitchPaymentError('expired');
   if (status.status !== checkout.statusAtCreation)
     throw new SwitchPaymentError('stale');
+  if (!checkout.canSwitch) throw new SwitchPaymentError('suborder');
   if (!isSupportedPaymentOption(options,choice.network,choice.token))
     throw new SwitchPaymentError('unsupported');
   // Provider orders store network=tron internally and do not represent
@@ -77,7 +78,8 @@ export function unchangedBeforeSwitch(
     initial.status.status===fresh.status.status &&
     a.token===b.token && a.network===b.network &&
     a.currency===b.currency && a.actualAmount===b.actualAmount &&
-    a.receiveAddress===b.receiveAddress && a.isSelected===b.isSelected;
+    a.receiveAddress===b.receiveAddress && a.isSelected===b.isSelected &&
+    a.canSwitch===b.canSwitch;
 }
 /** Whitelist and validate a switch response. Never keep provider payment_url. */
 export function decodeSwitchResult(

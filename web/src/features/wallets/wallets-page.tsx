@@ -6,7 +6,7 @@ import {
   DEFAULT_WALLET_FILTERS, NETWORKS, normalizeImportAddresses,
   parseWalletFilters, walletPageUrl, walletsApi,
 } from '../../api/endpoints/wallets';
-import { Button, Card, DataTable, Dialog, LoadingState, SelectField, TextField, useToast } from '../../components/ui';
+import { Button, Card, DataTable, Dialog, SelectField, TextField, useToast } from '../../components/ui';
 import { useI18n } from '../../i18n/i18n-provider';
 import { walletImportError, walletLabel, type WalletMessageKey } from './i18n';
 

@@ -26,7 +26,7 @@ function snap(change:Record<string,unknown>={},s:1|2|3|4=1):VerifiedCashierSnaps
 describe('W52 authoritative payment reconciliation',()=>{
  it('does not mark local provider paid state as a confirmed purchase',()=>{
    expect(evaluateCashier(snap({provider:'okpay',provider_status:'paid',requires_review:true}),1793747100000).kind).toBe('review');
-   expect(evaluateCashier(snap({provider:'okpay',provider_status:'paid'}),1793747100000).kind).toBe('payment');
+   expect(evaluateCashier(snap({provider:'okpay',provider_status:'paid'}),1793747100000).kind).toBe('review');
    expect(evaluateCashier(snap({provider:'on_chain',provider_status:'',paid_confirmed:false},2),1793747100000).kind).toBe('review');
    expect(evaluateCashier(snap({root_status:2,paid_confirmed:true},2),1793747100000).kind).toBe('paid');
  });

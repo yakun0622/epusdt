@@ -43,10 +43,12 @@ export function decodeReconciliation(raw:unknown,expected:string):CashierReconci
   const related=v.related_trade_id===''?null:v.related_trade_id;
   if(related!==null&&(typeof related!=='string'||!validTradeId(related)||
     related===expected))throw new TypeError('Invalid related order');
+  const providerStatus = v.provider_status==='' && v.provider==='on_chain'
+    ? 'none' : v.provider_status;
   if(typeof v.paid_confirmed!=='boolean'||typeof v.requires_review!=='boolean'||
     (v.provider!=='on_chain'&&v.provider!=='okpay')||
-    typeof v.provider_status!=='string'||
-    !providerStates.has(v.provider_status as ProviderState))
+    typeof providerStatus!=='string'||
+    !providerStates.has(providerStatus as ProviderState))
     throw new TypeError('Invalid reconciliation flags');
   const relatedStatus=related===null?null:status(v.related_status);
   const serverTime=parseUnixMilliseconds(v.server_time as number);
@@ -57,12 +59,12 @@ export function decodeReconciliation(raw:unknown,expected:string):CashierReconci
     // Never claim paid while the source ledger explicitly contradicts itself.
     return {tradeId:expected,status:status(v.status),rootTradeId:v.root_trade_id,
       rootStatus:status(v.root_status),relatedTradeId:related,relatedStatus,
-      provider:v.provider,providerStatus:v.provider_status as ProviderState,
+      provider:v.provider,providerStatus:providerStatus as ProviderState,
       paidConfirmed:false,requiresReview:true,serverTime,expirationTime};
   }
   return {tradeId:expected,status:status(v.status),rootTradeId:v.root_trade_id,
     rootStatus:status(v.root_status),relatedTradeId:related,relatedStatus,
-    provider:v.provider,providerStatus:v.provider_status as ProviderState,
+    provider:v.provider,providerStatus:providerStatus as ProviderState,
     paidConfirmed:v.paid_confirmed,requiresReview:v.requires_review,
     serverTime,expirationTime};
 }
@@ -86,9 +88,15 @@ export function evaluateCashier(
     return {kind:'selected-child',childTradeId:r.relatedTradeId};
   // Callback ledger state is not a live provider API query. "paid" alone
   // never overrides SQL order status; creating/failed/missing needs review.
-  if(r.provider==='okpay' &&
-    (r.providerStatus!=='pending'&&r.providerStatus!=='paid'))
-    return {kind:'review'};
+  if(r.provider==='okpay'){
+    if(r.providerStatus==='paid' || !['pending'].includes(r.providerStatus))
+      return {kind:'review'};
+    // Even an OkPay row with network=tron must never expose the OKPAY
+    // marker or any blockchain-looking address as a transfer destination.
+    return checkout.hasHostedPaymentLink
+      ? {kind:'payment',payment:'hosted',address:null}
+      : {kind:'awaiting-details'};
+  }
   return verifyCheckout(checkout,latest,serverNow);
 }
 /** Code 10010 means status conflict and requires a READ; never expiry. */

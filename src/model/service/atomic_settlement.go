@@ -211,7 +211,9 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 	for i:=range unlockOrders {
 		item:=&unlockOrders[i]
 		if !hasTransactionLock(item) {continue}
-		if err:=data.UnLockTransaction(item.Network,item.ReceiveAddress,item.Token,item.ActualAmount);err!=nil {
+		// Delete by trade ID, never by address/amount: a delayed cleanup
+		// must not remove a newer order's reallocated amount lock.
+		if err:=data.UnLockTransactionByTradeId(item.TradeId);err!=nil {
 			log.Sugar.Warnf("[order] committed payment lock cleanup pending, trade_id=%s: %v",item.TradeId,err)
 		}
 	}

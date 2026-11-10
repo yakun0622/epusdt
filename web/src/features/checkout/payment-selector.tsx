@@ -48,9 +48,14 @@ export function PaymentSelector({
     return ()=>{active=false;controller.abort();};
   },[initial.checkout.tradeId,revision]);
 
+  const providerAvailable=Boolean(options?.options.some(o=>o.method==='okpay'));
+  const chainAvailable=Boolean(options?.options.some(o=>o.method==='onchain'));
+  // If public config exposes OkPay only, don't leave an invalid on-chain
+  // selection as the implicit default.
+  const effectiveMethod=method==='onchain'&&!chainAvailable&&providerAvailable?'okpay':method;
   const methodOptions=useMemo(()=>
-    (options?.options??[]).filter(o=>o.method===method),
-    [options,method]);
+    (options?.options??[]).filter(o=>o.method===effectiveMethod),
+    [options,effectiveMethod]);
   const networks=useMemo(()=>{
     const found=new Map<string,string>();
     for(const option of methodOptions)found.set(option.network,option.label);
@@ -62,6 +67,7 @@ export function PaymentSelector({
   const effectiveToken=tokens.some(o=>o.token===token)?token:(tokens[0]?.token??'');
   const target=methodOptions.find(o=>o.network===effectiveNetwork && o.token===effectiveToken)??null;
   const canSubmit=Boolean(target)&&!busy&&!disabled&&!loading&&!error&&
+    initial.checkout.canSwitch&&
     (initial.status.status===1||initial.status.status===4)&&
     serverNow<initial.checkout.expirationTime;
 
@@ -106,9 +112,6 @@ export function PaymentSelector({
       onFailure(cause instanceof SwitchPaymentError?cause.problem:'unknown');
     }finally{inFlight.current=false;}
   }
-  const providerAvailable=Boolean(options?.options.some(o=>o.method==='okpay'));
-  const chainAvailable=Boolean(options?.options.some(o=>o.method==='onchain'));
-
   return <section className="checkout-method-select" aria-label={t('chooseMethod')}>
     <h3>{t('chooseMethod')}</h3>
     <p className="muted">{t('selectMax')} {t('selectInitial')}</p>
@@ -119,13 +122,13 @@ export function PaymentSelector({
         <Button variant="secondary" onClick={()=>setRevision(x=>x+1)}>{t('selectRetryOptions')}</Button>
       </div>:(!options||!options.options.length)?<p className="muted">{t('selectUnavailable')}</p>:
       <div className="checkout-method-controls">
-        <SelectField label={t('method')} value={method} disabled={busy||disabled}
+        <SelectField label={t('method')} value={effectiveMethod} disabled={busy||disabled}
           onChange={e=>changeMethod(e.target.value)}
           options={[
             ...(chainAvailable?[{value:'onchain',label:t('chain')}]:[]),
             ...(providerAvailable?[{value:'okpay',label:t('provider')}]:[]),
           ]}/>
-        {method==='onchain'&&<SelectField label={t('chooseNetwork')} value={effectiveNetwork}
+        {effectiveMethod==='onchain'&&<SelectField label={t('chooseNetwork')} value={effectiveNetwork}
           disabled={busy||disabled} onChange={e=>changeNetwork(e.target.value)}
           options={networks}/>}
         <SelectField label={t('chooseToken')} value={effectiveToken}

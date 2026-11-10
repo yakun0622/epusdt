@@ -63,6 +63,16 @@ func (c *BaseAdminController) ListApiKeys(ctx echo.Context) error {
 	return c.SucJson(ctx, rows)
 }
 
+// setSensitiveApiKeyNoStore disables HTTP caching for endpoints that can
+// return secret_key. No response body, PID or credential is written to logs.
+func setSensitiveApiKeyNoStore(ctx echo.Context) {
+  headers := ctx.Response().Header()
+  headers.Set("Cache-Control", "no-store, private, max-age=0")
+  headers.Set("Pragma", "no-cache")
+  headers.Set("Expires", "0")
+  headers.Set("X-Content-Type-Options", "nosniff")
+}
+
 // CreateApiKey mints a new universal key. PID is auto-incremented from
 // the highest existing numeric PID (starting at 1000). Secret is
 // randomly generated and returned once.
@@ -77,6 +87,7 @@ func (c *BaseAdminController) ListApiKeys(ctx echo.Context) error {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/api-keys [post]
 func (c *BaseAdminController) CreateApiKey(ctx echo.Context) error {
+	setSensitiveApiKeyNoStore(ctx)
 	req := new(CreateApiKeyRequest)
 	if err := ctx.Bind(req); err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
@@ -213,6 +224,7 @@ func (c *BaseAdminController) ChangeApiKeyStatus(ctx echo.Context) error {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/api-keys/{id}/rotate-secret [post]
 func (c *BaseAdminController) RotateApiKeySecret(ctx echo.Context) error {
+	setSensitiveApiKeyNoStore(ctx)
 	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
 	if err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
@@ -289,6 +301,7 @@ func (c *BaseAdminController) GetApiKeyStats(ctx echo.Context) error {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/api-keys/{id}/secret [get]
 func (c *BaseAdminController) GetApiKeySecret(ctx echo.Context) error {
+	setSensitiveApiKeyNoStore(ctx)
 	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
 	if err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)

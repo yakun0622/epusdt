@@ -1,0 +1,36 @@
+name: W54 settlement atomicity and replay safety (Go)
+
+on:
+  push:
+    branches: [master, 'feat/**']
+    paths:
+      - 'src/model/service/order_service.go'
+      - 'src/model/service/atomic_settlement.go'
+      - 'src/model/service/atomic_settlement_test.go'
+      - 'src/model/service/okpay_service.go'
+      - 'src/model/mdb/payment_tx_claim.go'
+      - 'src/model/dao/mdb_table_init.go'
+      - 'src/internal/testutil/testdb.go'
+      - '.github/workflows/w54-atomic-settlement.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  settlement-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Atomicity, replay and existing processor regressions
+        working-directory: src
+        run: |
+          go test ./model/service -run '^Test(W54|OrderProcessing|HandleOkPayNotify|Submit|W53)' -count=1 -v
+          go test ./controller/comm ./route -run TestNoMatchingTestsForCompile -count=1

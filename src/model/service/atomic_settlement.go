@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/GMWalletApp/epusdt/model/dao"
@@ -97,7 +96,6 @@ func lowerSettlementCandidates(ids []string) []string {
 func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
 	if req == nil || strings.TrimSpace(req.TradeId)=="" ||
 		strings.TrimSpace(req.BlockTransactionId)=="" {return constant.ParamsMarshalErr}
-	var committedOrder *mdb.Orders
 	var unlockOrders []mdb.Orders
 	err := dao.Mdb.Transaction(func(tx *gorm.DB) error {
 		// Resolve the parent identity before locking, then lock parent first
@@ -200,7 +198,6 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 			if provider.Error!=nil{return provider.Error}
 			if provider.RowsAffected!=1{return constant.OrderStatusConflict}
 		}
-		committedOrder=order
 		unlockOrders=append(unlockOrders,*order)
 		if order.ParentTradeId!="" {unlockOrders=append(unlockOrders,*root)}
 		unlockOrders=append(unlockOrders,siblings...)
@@ -218,10 +215,6 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 			log.Sugar.Warnf("[order] committed payment lock cleanup pending, trade_id=%s: %v",item.TradeId,err)
 		}
 	}
-	_ = committedOrder
 	return nil
 }
 
-// settlementGuard is used by manual and public write paths to preserve
-// the original real chain verifier and keep payment evidence authoritative.
-var _ = fmt.Sprintf

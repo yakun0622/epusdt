@@ -30,6 +30,8 @@ type UpdateRpcNodeRequest struct {
 	Url     *string `json:"url" example:"https://api.trongrid.io"`
 	Weight  *int    `json:"weight" example:"1"`
 	ApiKey  *string `json:"api_key" example:"your-api-key"`
+	// Explicit credential deletion only; an empty api_key from the legacy SPA preserves it.
+	ClearApiKey bool `json:"clear_api_key" example:"false"`
 	Enabled *bool   `json:"enabled" example:"true"`
 	Purpose *string `json:"purpose" enums:"general,manual_verify,both" example:"manual_verify"`
 }
@@ -146,8 +148,12 @@ func (c *BaseAdminController) UpdateRpcNode(ctx echo.Context) error {
 	if req.Weight != nil {
 		fields["weight"] = *req.Weight
 	}
-	if req.ApiKey != nil {
-		fields["api_key"] = *req.ApiKey
+	credential, updateCredential, credentialErr := rpcCredentialPatch(req)
+	if credentialErr != nil {
+		return c.FailJson(ctx, credentialErr)
+	}
+	if updateCredential {
+		fields["api_key"] = credential
 	}
 	if req.Enabled != nil {
 		fields["enabled"] = *req.Enabled
@@ -163,6 +169,22 @@ func (c *BaseAdminController) UpdateRpcNode(ctx echo.Context) error {
 		return c.FailJson(ctx, err)
 	}
 	return c.SucJson(ctx, nil)
+}
+
+// rpcCredentialPatch keeps already configured credentials when the legacy
+// compiled SPA sends api_key:"" on every edit. Only an explicit clear_api_key
+// flag deletes an existing credential. A nonempty api_key always replaces it.
+func rpcCredentialPatch(req *UpdateRpcNodeRequest) (string, bool, error) {
+	if req.ClearApiKey {
+		if req.ApiKey != nil && *req.ApiKey != "" {
+			return "", false, constant.ParamsMarshalErr
+		}
+		return "", true, nil
+	}
+	if req.ApiKey != nil && *req.ApiKey != "" {
+		return *req.ApiKey, true, nil
+	}
+	return "", false, nil
 }
 
 // DeleteRpcNode soft-deletes the row.

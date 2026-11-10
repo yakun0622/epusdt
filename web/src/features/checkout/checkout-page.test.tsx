@@ -27,6 +27,6 @@ describe('W50 public checkout page isolation',()=>{
       }
     }
     expect(checkoutLabel('zh-CN','failed')).toContain('无法核验');
-    expect(checkoutLabel('en-US','noWrites')).toContain('never marks orders paid');
+    expect(checkoutLabel('en-US','noWrites')).toContain('never settles an order');
   });
 });

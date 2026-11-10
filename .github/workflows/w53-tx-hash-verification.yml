@@ -1,0 +1,34 @@
+name: W53 public transaction verification safety (Go)
+
+on:
+  push:
+    branches: [master, 'feat/**']
+    paths:
+      - 'src/model/service/checkout_hash_verify.go'
+      - 'src/model/service/checkout_hash_verify_test.go'
+      - 'src/model/response/checkout_hash_verify_response.go'
+      - 'src/controller/comm/pay_controller.go'
+      - 'src/route/router.go'
+      - '.github/workflows/w53-tx-hash-verification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-no-settlement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Test verification, replay, relations and route compilation
+        working-directory: src
+        run: |
+          go test ./model/service -run '^TestW53' -count=1 -v
+          go test ./controller/comm ./route -run TestNoMatchingTestsForCompile -count=1

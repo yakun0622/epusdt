@@ -1,8 +1,10 @@
-import {useCallback,useEffect,useMemo,useState} from 'react';
+import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {validTradeId} from '../../api/endpoints/checkout';
 import {reconciliationApi,evaluateCashier,stopCashierPolling,nextCashierPollDelay,
   classifyStatusReadError,type VerifiedCashierSnapshot} from '../../api/endpoints/reconciliation';
-import {Button} from '../../components/ui';
+import {txHashApi,validHashInput,canVerifyTxHash,classifyHashFailure,
+  type HashProblem} from '../../api/endpoints/tx-hash';
+import {Button,TextField} from '../../components/ui';
 import {PaymentSelector,switchMessageKey} from './payment-selector';
 import type {SwitchProblem} from '../../api/endpoints/payment-switch';
 import {useI18n} from '../../i18n/i18n-provider';
@@ -26,6 +28,17 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
   const [switching,setSwitching]=useState(false);
   const [switchProblem,setSwitchProblem]=useState<SwitchProblem|null>(null);
   const [uncertain,setUncertain]=useState(false);
+  // W53 verification is never a settlement. A lock survives all 5s GET
+  // refreshes, including component rerenders and failed/uncertain POSTs.
+  const [hashInput,setHashInput]=useState('');
+  const [hashConfirm,setHashConfirm]=useState(false);
+  const [hashChecking,setHashChecking]=useState(false);
+  const [hashOutcome,setHashOutcome]=useState<'verified'|HashProblem|null>(null);
+  const hashAttempted=useRef(false);
+  useEffect(()=>{
+    hashAttempted.current=false;
+    setHashInput('');setHashConfirm(false);setHashChecking(false);setHashOutcome(null);
+  },[tradeId]);
 
   useEffect(()=>{
     if(!validTradeId(tradeId)){
@@ -89,6 +102,28 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
     !snapshot?.reconciliation.relatedTradeId&& !checkout.hasHostedPaymentLink&&
     checkout.receiveAddress.trim().toUpperCase()!=='OKPAY'&&
     serverNow<checkout.expirationTime);
+  const canHash=canVerifyTxHash(snapshot,serverNow) && !switching && !uncertain;
+  const hashProblemLabels:Record<HashProblem,CheckoutKey>={
+    invalid:'hashInvalid',changed:'hashChanged',used:'hashUsed',
+    'not-waiting':'hashNotWaiting',failed:'hashFailed',provider:'hashProvider',
+    unknown:'hashUnknown',
+  };
+  const verifyHash=async()=>{
+    if(hashAttempted.current||!snapshot||serverNow===null||!canHash||!validHashInput(hashInput))return;
+    hashAttempted.current=true;
+    setHashConfirm(false);setHashChecking(true);setHashOutcome(null);
+    try {
+      // Only a server RPC evidence check. No call to /pay/submit-tx-hash.
+      await txHashApi.verifyOnce(snapshot,hashInput,serverNow);
+      setHashOutcome('verified');
+    } catch(cause) {
+      setHashOutcome(classifyHashFailure(cause));
+    } finally {
+      setHashChecking(false);
+      // A fresh triple GET, never the verification response, decides paid.
+      setRevision(v=>v+1);
+    }
+  };
   const statusLabel=useMemo(()=>{
     switch(view.kind){
       case 'paid':return t('paid');
@@ -161,6 +196,32 @@ export function CheckoutPage({tradeId,onNavigate}:{tradeId:string;onNavigate?:(p
           </dl>
           {!checkout.isSelected&&<p className="warning" role="note">{t('notSelected')}</p>}
           <p className="muted">{t('readOnly')}</p>
+          <div className="checkout-hash-verifier">
+            <h3>{t('hashTitle')}</h3>
+            <p className="muted">{t('hashHelp')}</p>
+            {canHash&&!hashAttempted.current&&!hashChecking&&
+              <>
+                <TextField label={t('hashLabel')} autoComplete="off" spellCheck={false}
+                  value={hashInput} maxLength={256}
+                  onChange={e=>{setHashInput(e.target.value);setHashConfirm(false);}}/>
+                {!hashConfirm?
+                  <Button variant="secondary" type="button" disabled={!validHashInput(hashInput)}
+                    onClick={()=>setHashConfirm(true)}>{t('hashStart')}</Button>:
+                  <div className="checkout-hash-confirm" role="group">
+                    <p className="warning">{t('hashConfirm')}</p>
+                    <Button type="button" disabled={!validHashInput(hashInput)}
+                      onClick={()=>void verifyHash()}>{t('hashSubmit')}</Button>
+                    <Button type="button" variant="secondary"
+                      onClick={()=>setHashConfirm(false)}>{t('hashCancel')}</Button>
+                  </div>}
+              </>}
+            {hashChecking&&<p role="status" className="muted">{t('hashChecking')}</p>}
+            {hashOutcome&&<div className="checkout-alert"
+              role={hashOutcome==='verified'?'status':'alert'}>
+              {hashOutcome==='verified'?t('hashVerified'):t(hashProblemLabels[hashOutcome])}
+              <p className="muted">{t('hashLocked')}</p>
+            </div>}
+          </div>
         </div>}
         {!switching&&view.kind==='payment'&&view.payment==='hosted'&&
           <div role="note" className="checkout-alert">

@@ -71,6 +71,7 @@ func RegisterRoute(e *echo.Echo) {
 	payRoute.GET("/return/:trade_id", comm.Ctrl.ReturnToMerchant)
 	payRoute.GET("/check-status/:trade_id", comm.Ctrl.CheckStatus)
 	payRoute.GET("/reconcile-status/:trade_id", comm.Ctrl.CheckoutReconciliation)
+	payRoute.POST("/verify-tx-hash/:trade_id", comm.Ctrl.VerifyTxHash)
 	payRoute.POST("/submit-tx-hash/:trade_id", comm.Ctrl.SubmitTxHash)
 	payRoute.POST("/switch-network", comm.Ctrl.SwitchNetwork)
 

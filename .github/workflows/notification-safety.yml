@@ -1,0 +1,31 @@
+name: W44 notification response safety (Go)
+
+on:
+  push:
+    branches:
+      - master
+      - 'feat/**'
+    paths:
+      - 'src/controller/admin/notification_controller.go'
+      - 'src/controller/admin/notification_safe_test.go'
+      - '.github/workflows/notification-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Verify notification secrets are not serialized
+        working-directory: src
+        run: go test ./controller/admin -run TestNotificationSafeViewNeverReturnsCredentialConfig -count=1 -v

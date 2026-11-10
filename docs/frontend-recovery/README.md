@@ -2,7 +2,13 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W42/W43 配置与 Dashboard（2026-11-10）
+## 当前最新交付：W44 辅助页面（2026-11-10）
+
+- [W44-IMPLEMENTATION.md](./W44-IMPLEMENTATION.md)：通知渠道及服务器脱敏、显示与集成只读页、Help、安装说明和单任务单次合并规范。
+- 仅已有 Go 通知渠道接口允许 Telegram 管理；无发送器的 Webhook/Email、无安装后台的 Install 均不伪造可用能力。
+- W31 不实施，生产 `src/www` 不替换。下一阶段 **W50–W55 公共收银台及真实支付链路恢复**。
+
+## 历史交付：W42/W43 配置与 Dashboard（2026-11-10）
 
 - [W42-W43-IMPLEMENTATION.md](./W42-W43-IMPLEMENTATION.md)：系统/Telegram/Pay/EPAY/OkPay 配置、部分成功逐项反馈、汇率刷新、真实订单和 RPC 指标、安全脱敏及 MySQL 5.7 修复。
 - [Web Actions #42792271770](https://github.com/yakun0622/epusdt/actions/runs/42792271770)：28 文件/80 项测试、TypeScript 与 Vite 构建通过。

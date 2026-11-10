@@ -30,8 +30,9 @@ EPUSDT_BACKEND=http://127.0.0.1:8000 npm run dev
 - W40/W41：`/chains` 网络与 ChainToken 的列表/编辑/启停、Token 新增/删除；`/rpc` 节点列表/新增/编辑/启停/删除/健康检查，RPC 新列表服务端 URL 脱敏，凭证不显示/不存浏览器存储。
 - W42：五种配置页面及 `rate/status` 缓存状态与确认式手动刷新；批量 PUT 逐项结果、凭证隐藏、URL 脱敏、错误重试。
 - W43：`/dashboard` 实际概览、订单统计/日小时趋势、RPC 进程快照，禁用虚假 KPI 和跨币种收入汇总展示。
+- W44：Display 品牌只读预览、Notifications 实际 Telegram 渠道与脱敏、Integrations 真实接入状态只读页、Help 文档、Install 只读说明。Webhook/Email 暂无发送器。
 
-当前 Dashboard 已使用真实 Go 接口展示订单/RPC 指标；`/orders` 是只读订单表格/CSV，`/addresses` 已恢复钱包管理，System/Telegram/Pay/EPAY/OkPay 配置页已接入。其余辅助后台模块、完整支付流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
+当前 Dashboard 已使用真实 Go 接口展示订单/RPC 指标；`/orders` 是只读订单表格/CSV，`/addresses` 已恢复钱包管理，System/Telegram/Pay/EPAY/OkPay 配置页已接入。完整支付流程、PWA 与旧 UI 像素级对照尚未完成。外观预览演示数据不是真实商户数据。
 
 ## Actions 编译
 
@@ -71,3 +72,7 @@ JWT 存储为浏览器可读 Cookie，是原版行为，不提供 HttpOnly 保�
 ## W42/W43 设置与 Dashboard 交付
 
 详见 `docs/frontend-recovery/W42-W43-IMPLEMENTATION.md`。五类配置、按键部分失败反馈、敏感字段和 URL 脱敏、真实订单/RPC 指标以及 MySQL 5.7 聚合兼容。W31 与生产 `src/www` 未修改，实际浏览器/数据库/支付联调仍是发布门槛。
+
+## W44 辅助页面与新合并流程
+
+详见 `docs/frontend-recovery/W44-IMPLEMENTATION.md`。从 W44 起每个任务只建一个临时分支，分支 Actions 全绿后 squash 合并 master 一次，最后清理临时分支。Webhook/Email 无发送器、Install 无安装 API，页面不会承诺可用；生产 `src/www` 不变。

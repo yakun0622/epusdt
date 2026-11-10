@@ -34,7 +34,7 @@ describe('W41 RPC credentials and status contracts', () => {
     await rpcApi.healthCheck(4).catch(() => { /* fake response is an array here */ });
     await rpcApi.remove(4);
     expect(fetchImpl.mock.calls.map(([path, opts]) => [path, opts?.method ?? 'GET'])).toEqual([
-      ['/admin/api/v1/rpc-nodes?network=ethereum', 'GET'],
+      ['/admin/api/v1/rpc-nodes?redact=1&network=ethereum', 'GET'],
       ['/admin/api/v1/rpc-nodes', 'POST'],
       ['/admin/api/v1/rpc-nodes/4', 'PATCH'],
       ['/admin/api/v1/rpc-nodes/4', 'PATCH'],

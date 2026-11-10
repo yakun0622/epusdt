@@ -130,7 +130,7 @@ export function decodeRpcHealth(value: unknown): RpcHealthResult {
 export const rpcApi = {
   list: async (network = '', signal?: AbortSignal): Promise<RpcNodeView[]> =>
     decodeRpcNodes(await adminClient.json<unknown>(
-      '/rpc-nodes' + (network.trim() ? '?network=' + encodeURIComponent(networkPart(network)) : ''), { signal })),
+      '/rpc-nodes?redact=1' + (network.trim() ? '&network=' + encodeURIComponent(networkPart(network)) : ''), { signal })),
   create: async (input: RpcCreate): Promise<void> => {
     // The Go create response may include the newly submitted URL. Never return it to React state.
     await adminClient.postJson<unknown>('/rpc-nodes', validateRpcCreate(input));

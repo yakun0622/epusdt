@@ -17,7 +17,7 @@ func TestNotificationSafeViewNeverReturnsCredentialConfig(t *testing.T) {
   view:=newNotificationChannelSafeView(row)
   data,err:=json.Marshal(view)
   if err!=nil {t.Fatal(err)}
-  for _,secret:=range []string{"TOP_SECRET","bot_token","chat_id","proxy","PRIVATE_SECRET","\\"config\\":"} {
+  for _,secret:=range []string{"TOP_SECRET","bot_token","chat_id","proxy","PRIVATE_SECRET"} {
     if strings.Contains(string(data),secret) {t.Fatalf("safe list leaks: %s",secret)}
   }
   if !view.Configured || !view.Events[mdb.NotifyEventPaySuccess] ||

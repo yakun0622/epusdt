@@ -2,12 +2,13 @@ import {describe,expect,it} from 'vitest';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {I18nProvider} from '../../i18n/i18n-provider';
 import {ToastProvider} from '../../components/ui/toast';
+import {ThemeProvider} from '../../theme/theme-provider';
 import {supportedLocales} from '../../i18n/locale';
 import {auxiliaryMessages} from './i18n';
 import {NotificationsPage} from './notifications-page';
 import {DisplayPage,HelpPage,InstallGuide,IntegrationsPage} from './info-pages';
 const render=(node:React.ReactNode)=>renderToStaticMarkup(
- <I18nProvider><ToastProvider>{node}</ToastProvider></I18nProvider>);
+ <ThemeProvider><I18nProvider><ToastProvider>{node}</ToastProvider></I18nProvider></ThemeProvider>);
 describe('W44 auxiliary pages',()=>{
  it('localizes every auxiliary UI key in all six languages',()=>{
   const keys=Object.keys(auxiliaryMessages['en-US']).sort();

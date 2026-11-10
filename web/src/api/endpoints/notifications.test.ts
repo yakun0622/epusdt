@@ -23,7 +23,7 @@ describe('W44 notification safety and real API routes',()=>{
   expect(await notificationsApi.list()).toEqual([safe]);
   expect(await notificationsApi.createTelegram({
    name:'Alert',token:'SECRET_BOT',chatId:'123',events:defaultFlags(),enabled:true,
-  })).toEqual([safe]);
+  })).toEqual(safe);
   await notificationsApi.updateMetadata(17,'Alert',defaultFlags());
   await notificationsApi.toggle(17,false);
   await notificationsApi.remove(17);

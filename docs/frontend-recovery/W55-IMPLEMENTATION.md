@@ -20,5 +20,6 @@ Date: 2026-11-11. Feature branch: feat/w55-callback-delivery-mysql57-safety.
 
 ## Tests and release gate
 - SQLite: competing workers, stale and expired leases, retry/backoff, orphan parent/child, provider mismatch, database error injection rolls back callback ack; merchant HTTP stable idempotency header, EPay/GMPay tests; scanners and W53/W54 regression.
+- MySQL 5.7 requires utf8mb4-safe prefix lengths for legacy indexed TEXT columns; GORM index tags now supply 191-character prefixes without rewriting historical payment data.
 - MySQL 5.7 (service container): AutoMigrate on isolated epusdt_w55_ci; two separate GORM connections race for a W54 payment_tx_claim and W55 callback lease; only one settlement and one callback owner.
 - A production multi-host failover test with real RPC, real merchant endpoints and an OkPay sandbox remains required before deployment. No automatic reconciliation of historical inconsistent records; unknown outcomes are never called paid.

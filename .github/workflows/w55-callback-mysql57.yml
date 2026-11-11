@@ -13,6 +13,7 @@ on:
       - 'src/model/service/atomic_settlement.go'
       - 'src/model/service/order_service.go'
       - 'src/model/mdb/callback_delivery.go'
+      - 'src/model/mdb/orders_mdb.go'
       - 'src/model/dao/mdb_table_init.go'
       - 'src/internal/testutil/testdb.go'
       - '.github/workflows/w55-callback-mysql57.yml'

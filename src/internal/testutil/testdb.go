@@ -40,6 +40,7 @@ func SetupTestDatabases(t testing.TB) func() {
 	mustMigrate(t, mainDB,
 		&mdb.Orders{},
 		&mdb.PaymentTxClaim{},
+		&mdb.CallbackDelivery{},
 		&mdb.ProviderOrder{},
 		&mdb.WalletAddress{},
 		&mdb.ApiKey{},

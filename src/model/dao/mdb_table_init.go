@@ -35,6 +35,7 @@ func MdbTableInit() {
 		}{
 			{"Orders", &mdb.Orders{}},
 			{"PaymentTxClaim", &mdb.PaymentTxClaim{}},
+			{"CallbackDelivery", &mdb.CallbackDelivery{}},
 			{"WalletAddress", &mdb.WalletAddress{}},
 			{"AdminUser", &mdb.AdminUser{}},
 			{"ApiKey", &mdb.ApiKey{}},

@@ -112,6 +112,12 @@ func lowerSettlementCandidates(ids []string) []string {
 // serialize on the parent FOR UPDATE lock (MySQL/Postgres). The unique
 // claim_key handles cross-process replay and collision across instances.
 func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
+	return settleOrderAtomicallyOnDB(dao.Mdb,req,opts)
+}
+
+// settleOrderAtomicallyOnDB allows integration tests to use two independent
+// MySQL pools (simulating separate Go processes) against the SAME primary DB.
+func settleOrderAtomicallyOnDB(db *gorm.DB,req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
 	if req == nil || strings.TrimSpace(req.TradeId)=="" ||
 		strings.TrimSpace(req.BlockTransactionId)=="" {return constant.ParamsMarshalErr}
 	var unlockOrders []mdb.Orders
@@ -120,7 +126,7 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 	// decide idempotency; never issue another settlement automatically.
 	ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
 	defer cancel()
-	err := dao.Mdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Resolve the parent identity before locking, then lock parent first
 		// to use a consistent lock order with competing child settlements.
 		var preliminary mdb.Orders

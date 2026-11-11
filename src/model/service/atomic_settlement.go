@@ -227,11 +227,13 @@ func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProces
 		// result of our own settlement. Verified OkPay callback is the
 		// only provider path into this function; no provider HTTP calls.
 		if order.PayProvider==mdb.PaymentProviderOkPay {
+			providerUpdates:=map[string]interface{}{"status":mdb.ProviderOrderStatusPaid}
+			if opts.providerNotifyRaw!="" {providerUpdates["notify_raw"]=opts.providerNotifyRaw}
 			provider:=tx.Model(&mdb.ProviderOrder{}).
 				Where("trade_id = ? AND provider = ? AND provider_order_id = ? AND status IN ?",
 					order.TradeId,mdb.PaymentProviderOkPay,req.BlockTransactionId,
 					[]string{mdb.ProviderOrderStatusPending,mdb.ProviderOrderStatusCreating}).
-				Update("status",mdb.ProviderOrderStatusPaid)
+				Updates(providerUpdates)
 			if provider.Error!=nil{return provider.Error}
 			if provider.RowsAffected!=1{return constant.OrderStatusConflict}
 		}

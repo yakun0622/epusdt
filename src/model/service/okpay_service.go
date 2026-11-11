@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/GMWalletApp/epusdt/model/request"
@@ -237,17 +239,18 @@ func HandleOkPayNotify(form map[string]string, rawFormData string) error {
 		return fmt.Errorf("okpay provider order not found: %s", payload.UniqueID)
 	}
 
-	_ = data.SaveProviderOrderNotify(payload.UniqueID, order.PayProvider, payload.RawFormData)
-
 	if !strings.EqualFold(payload.Status, "success") || !strings.EqualFold(payload.NotifyType, "deposit") || payload.PayStatus != "1" {
+		if err:=data.SaveProviderOrderNotify(payload.UniqueID,order.PayProvider,payload.RawFormData);err!=nil{return err}
 		log.Sugar.Infof("[okpay] notify ignored trade_id=%s status=%s pay_status=%s type=%s", payload.UniqueID, payload.Status, payload.PayStatus, payload.NotifyType)
 		return nil
 	}
 
-	if providerRow.ProviderOrderID != "" && providerRow.ProviderOrderID != payload.OrderID {
+	if providerRow.ProviderOrderID == "" || providerRow.ProviderOrderID != payload.OrderID {
 		return fmt.Errorf("okpay provider order id mismatch: got=%s want=%s", payload.OrderID, providerRow.ProviderOrderID)
 	}
-	if !strings.EqualFold(strings.TrimSpace(order.Token), strings.TrimSpace(payload.Coin)) {
+	if payload.Code != "200" {return fmt.Errorf("okpay success payload has invalid code: %s",payload.Code)}
+	if !strings.EqualFold(strings.TrimSpace(order.Token), strings.TrimSpace(payload.Coin)) ||
+		!strings.EqualFold(strings.TrimSpace(providerRow.Coin), strings.TrimSpace(payload.Coin)) {
 		return fmt.Errorf("okpay coin mismatch: got=%s want=%s", payload.Coin, order.Token)
 	}
 
@@ -255,12 +258,15 @@ func HandleOkPayNotify(form map[string]string, rawFormData string) error {
 	if err != nil {
 		return fmt.Errorf("invalid okpay amount: %w", err)
 	}
-	precision := data.GetAmountPrecision()
-	if fmt.Sprintf("%.*f", precision, notifyAmount) != fmt.Sprintf("%.*f", precision, order.ActualAmount) {
-		return fmt.Errorf("okpay amount mismatch: got=%.*f want=%.*f", precision, notifyAmount, precision, order.ActualAmount)
+	// Never round a short payment up to the expected fiat precision.
+	// The provider's original purchase amount is an independent bound.
+	if notifyAmount<=0 || providerRow.Amount<=0 ||
+		!decimal.NewFromFloat(notifyAmount).Equal(decimal.NewFromFloat(order.ActualAmount)) ||
+		!decimal.NewFromFloat(notifyAmount).Equal(decimal.NewFromFloat(providerRow.Amount)) {
+		return fmt.Errorf("okpay amount mismatch")
 	}
 
-	err = OrderProcessing(&request.OrderProcessingRequest{
+	err = settleVerifiedOkPayNotification(&request.OrderProcessingRequest{
 		ReceiveAddress:     order.ReceiveAddress,
 		Currency:           order.Currency,
 		Token:              order.Token,
@@ -268,7 +274,7 @@ func HandleOkPayNotify(form map[string]string, rawFormData string) error {
 		Amount:             order.ActualAmount,
 		TradeId:            order.TradeId,
 		BlockTransactionId: payload.OrderID,
-	})
+	},payload.RawFormData)
 	processed := err == nil
 	if err == constant.OrderBlockAlreadyProcess {
 		// Only an exact replay for THIS already-settled order may be
@@ -287,8 +293,6 @@ func HandleOkPayNotify(form map[string]string, rawFormData string) error {
 	if processed {
 		sendPaymentNotification(order)
 	}
-	if err = data.MarkProviderOrderPaid(payload.UniqueID, order.PayProvider, payload.RawFormData); err != nil {
-		return err
-	}
+	// Provider ledger including signed callback payload committed with order.
 	return nil
 }

@@ -40,6 +40,7 @@ var (
 type orderProcessingOptions struct {
 	allowedStatuses       []int
 	parentAllowedStatuses []int
+	providerNotifyRaw     string
 }
 
 // apiKeyID safely extracts the primary key from an ApiKey row.
@@ -242,6 +243,16 @@ func OrderProcessing(req *request.OrderProcessingRequest) error {
 	return orderProcessing(req, orderProcessingOptions{
 		allowedStatuses:       manualPaymentWaitPayStatuses,
 		parentAllowedStatuses: manualPaymentWaitPayStatuses,
+	})
+}
+
+// settleVerifiedOkPayNotification persists a verified provider notification
+// in the SAME database transaction as the paid order and callback ownership.
+func settleVerifiedOkPayNotification(req *request.OrderProcessingRequest,raw string) error {
+	return orderProcessing(req,orderProcessingOptions{
+		allowedStatuses:manualPaymentWaitPayStatuses,
+		parentAllowedStatuses:manualPaymentWaitPayStatuses,
+		providerNotifyRaw:raw,
 	})
 }
 

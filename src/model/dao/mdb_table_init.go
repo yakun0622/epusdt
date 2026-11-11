@@ -93,7 +93,8 @@ func MigrateOrdersCompatible(db *gorm.DB) error {
 			return fmt.Errorf("add legacy order column %s: %w",field.DBName,err)
 		}
 	}
-	for name:=range stmt.Schema.ParseIndexes() {
+	for _,index:=range stmt.Schema.ParseIndexes() {
+		name:=index.Name
 		if m.HasIndex(model,name) {continue}
 		if err:=m.CreateIndex(model,name);err!=nil {
 			return fmt.Errorf("create legacy order index %s: %w",name,err)

@@ -1,0 +1,79 @@
+name: W55 callback safety and MySQL 5.7 integration (Go)
+
+on:
+  push:
+    branches: [master, 'feat/**']
+    paths:
+      - 'src/mq/**'
+      - 'src/model/data/callback_delivery_data.go'
+      - 'src/model/data/callback_delivery_data_test.go'
+      - 'src/model/data/order_data.go'
+      - 'src/model/service/w55_*'
+      - 'src/model/service/okpay_service.go'
+      - 'src/model/service/atomic_settlement.go'
+      - 'src/model/service/order_service.go'
+      - 'src/model/mdb/callback_delivery.go'
+      - 'src/model/dao/mdb_table_init.go'
+      - 'src/internal/testutil/testdb.go'
+      - '.github/workflows/w55-callback-mysql57.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  callback-safety:
+    name: SQLite concurrency, callback protocol and chain scanner regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: SQLite callback lease, SQL failure and merchant delivery tests
+        working-directory: src
+        run: |
+          go test ./model/data -run '^TestW55' -count=1 -v
+          go test ./mq -count=1 -v
+      - name: Go chain scanner, W53/W54 settlement and OkPay regression
+        working-directory: src
+        run: |
+          go test ./model/service -run '^Test(W55|W54|W53|HandleOkPayNotify|OrderProcessing)' -count=1 -v
+          go test ./task ./model/dao -count=1
+          go test ./controller/comm ./route -run TestNoMatchingTestsForCompile -count=1
+
+  mysql57:
+    name: MySQL 5.7 multi-pool transaction and callback integration
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: w55localtest
+          MYSQL_DATABASE: epusdt_w55_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pw55localtest"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Verify two independent Go pools against actual MySQL 5.7
+        working-directory: src
+        env:
+          W55_MYSQL_DSN: root:w55localtest@tcp(127.0.0.1:3306)/epusdt_w55_ci?charset=utf8mb4&parseTime=True&loc=UTC
+        run: |
+          go test ./model/service -run '^TestW55MySQL57' -count=1 -timeout=8m -v

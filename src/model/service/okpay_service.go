@@ -239,14 +239,19 @@ func HandleOkPayNotify(form map[string]string, rawFormData string) error {
 		return fmt.Errorf("okpay provider order not found: %s", payload.UniqueID)
 	}
 
+	if providerRow.ProviderOrderID == "" || providerRow.ProviderOrderID != payload.OrderID {
+		// Even non-success payloads must not contaminate another order's
+		// signed provider audit record.
+		return fmt.Errorf("okpay provider order id mismatch: got=%s want=%s", payload.OrderID, providerRow.ProviderOrderID)
+	}
 	if !strings.EqualFold(payload.Status, "success") || !strings.EqualFold(payload.NotifyType, "deposit") || payload.PayStatus != "1" {
-		if err:=data.SaveProviderOrderNotify(payload.UniqueID,order.PayProvider,payload.RawFormData);err!=nil{return err}
+		// Never overwrite the immutable proof of an already-settled payment
+		// with a later signed failure/pending callback.
+		if providerRow.Status != mdb.ProviderOrderStatusPaid {
+			if err:=data.SaveProviderOrderNotify(payload.UniqueID,order.PayProvider,payload.RawFormData);err!=nil{return err}
+		}
 		log.Sugar.Infof("[okpay] notify ignored trade_id=%s status=%s pay_status=%s type=%s", payload.UniqueID, payload.Status, payload.PayStatus, payload.NotifyType)
 		return nil
-	}
-
-	if providerRow.ProviderOrderID == "" || providerRow.ProviderOrderID != payload.OrderID {
-		return fmt.Errorf("okpay provider order id mismatch: got=%s want=%s", payload.OrderID, providerRow.ProviderOrderID)
 	}
 	if payload.Code != "200" {return fmt.Errorf("okpay success payload has invalid code: %s",payload.Code)}
 	if !strings.EqualFold(strings.TrimSpace(order.Token), strings.TrimSpace(payload.Coin)) ||

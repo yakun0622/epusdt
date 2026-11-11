@@ -172,7 +172,7 @@ func TestW55RejectsMissingParentAndUnexpectedStatus(t *testing.T){
  if _,ok,err:=ClaimMerchantCallback(dao.Mdb,o.TradeId,"x",time.Now(),2,time.Second);err!=nil||ok{
   t.Fatalf("pending order got callback lease %v %v",ok,err)
  }
- if _,ok,err:=FinishMerchantCallback(dao.Mdb,o.TradeId,"x",true,time.Now());err!=nil||ok{
+ if ok,err:=FinishMerchantCallback(dao.Mdb,o.TradeId,"x",true,time.Now());err!=nil||ok{
   t.Fatalf("pending order ack %v %v",ok,err)
  }
 }

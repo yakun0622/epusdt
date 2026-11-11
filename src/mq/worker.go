@@ -1,6 +1,8 @@
 package mq
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -121,7 +123,7 @@ func processExpiredOrders() {
 			if strings.TrimSpace(order.Network) == "" || strings.TrimSpace(order.ReceiveAddress) == "" || strings.TrimSpace(order.Token) == "" || order.ActualAmount <= 0 {
 				continue
 			}
-			if err = data.UnLockTransaction(order.Network, order.ReceiveAddress, order.Token, order.ActualAmount); err != nil {
+			if err = data.UnLockTransactionByTradeId(order.TradeId); err != nil {
 				log.Sugar.Warnf("[mq] release expired transaction lock failed, trade_id=%s, err=%v", order.TradeId, err)
 			}
 		}
@@ -170,25 +172,33 @@ func processCallback(tradeID string) {
 		<-callbackLimiter
 		callbackInflight.Delete(tradeID)
 	}()
-
-	freshOrder, err := data.GetOrderInfoByTradeId(tradeID)
-	if err != nil {
-		log.Sugar.Errorf("[mq] reload callback order failed, trade_id=%s, err=%v", tradeID, err)
+	// Each attempt has a random lease token; the merchant-facing delivery ID
+	// stays the SAME for every retry and every process instance.
+	randomToken:=make([]byte,16)
+	if _,err:=rand.Read(randomToken);err!=nil {
+		log.Sugar.Errorf("[mq] callback lease token failed trade_id=%s err=%v",tradeID,err)
 		return
 	}
-	if freshOrder.ID <= 0 || freshOrder.Status != mdb.StatusPaySuccess || freshOrder.CallBackConfirm != mdb.CallBackConfirmNo {
+	token:=hex.EncodeToString(randomToken)
+	order,claimed,err:=data.ClaimMerchantCallback(dao.Mdb,tradeID,token,time.Now(),
+		config.GetOrderNoticeMaxRetry(),config.GetCallbackRetryBaseDuration())
+	if err!=nil {
+		log.Sugar.Errorf("[mq] claim callback failed trade_id=%s err=%v",tradeID,err)
 		return
 	}
-
-	if err = sendOrderCallback(freshOrder); err != nil {
-		log.Sugar.Warnf("[mq] callback request failed, trade_id=%s, attempt=%d, err=%v", freshOrder.TradeId, freshOrder.CallbackNum+1, err)
-		freshOrder.CallBackConfirm = mdb.CallBackConfirmNo
-	} else {
-		freshOrder.CallBackConfirm = mdb.CallBackConfirmOk
+	if !claimed{return}
+	sendErr:=sendOrderCallback(order)
+	if sendErr!=nil {
+		log.Sugar.Warnf("[mq] callback request failed trade_id=%s attempt=%d err=%v",
+			tradeID,order.CallbackNum+1,sendErr)
 	}
-
-	if err = data.SaveCallBackOrdersResp(freshOrder); err != nil {
-		log.Sugar.Errorf("[mq] save callback result failed, trade_id=%s, err=%v", freshOrder.TradeId, err)
+	applied,err:=data.FinishMerchantCallback(dao.Mdb,tradeID,token,sendErr==nil,time.Now())
+	if err!=nil {
+		// A delivered HTTP response with an uncertain database commit must
+		// not become a new payment; retry will reuse the stable delivery ID.
+		log.Sugar.Errorf("[mq] persist callback result failed trade_id=%s err=%v",tradeID,err)
+	}else if !applied {
+		log.Sugar.Warnf("[mq] callback lease no longer owned trade_id=%s",tradeID)
 	}
 }
 
@@ -205,7 +215,7 @@ func sendOrderCallback(order *mdb.Orders) error {
 			return err
 		}
 
-		epayResp, err := http_client.GetHttpClient().R().SetQueryParams(formData).Get(order.NotifyUrl)
+		epayResp, err := http_client.GetHttpClient().R().SetQueryParams(formData).SetHeader("X-Epusdt-Delivery-ID",data.MerchantCallbackDeliveryID(order.TradeId)).Get(order.NotifyUrl)
 		if err != nil {
 			return err
 		}
@@ -240,6 +250,7 @@ func sendOrderCallback(order *mdb.Orders) error {
 		resp, err := client.R().
 			SetHeader("powered-by", "Epusdt(https://github.com/GMwalletApp/epusdt)").
 			SetBody(orderResp).
+			SetHeader("X-Epusdt-Delivery-ID",data.MerchantCallbackDeliveryID(order.TradeId)).
 			Post(order.NotifyUrl)
 		if err != nil {
 			return err

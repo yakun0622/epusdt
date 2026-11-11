@@ -209,6 +209,8 @@ func GetPendingCallbackOrders(maxRetry int, limit int) ([]PendingCallbackOrder, 
 		Where("callback_num <= ?", maxRetry).
 		Where("callback_confirm = ?", mdb.CallBackConfirmNo).
 		Where("status = ?", mdb.StatusPaySuccess).
+		Where("(parent_trade_id = ? OR parent_trade_id IS NULL)", "").
+		Where("NOT EXISTS (SELECT 1 FROM callback_delivery cd WHERE cd.trade_id = orders.trade_id AND (cd.delivered_at_ms > 0 OR cd.lease_until_ms > ?))", time.Now().UnixMilli()).
 		Order("updated_at asc")
 	if limit > 0 {
 		query = query.Limit(limit)

@@ -11,6 +11,7 @@ import (
  "github.com/GMWalletApp/epusdt/internal/testutil"
  "github.com/GMWalletApp/epusdt/model/mdb"
  "github.com/GMWalletApp/epusdt/model/data"
+ "github.com/GMWalletApp/epusdt/model/dao"
  "github.com/GMWalletApp/epusdt/model/request"
  "github.com/GMWalletApp/epusdt/util/constant"
  gmysql "gorm.io/driver/mysql"
@@ -40,7 +41,10 @@ func w55OpenMySQL57(t *testing.T) (*gorm.DB,*gorm.DB) {
   return db
  }
  db1,db2:=open(),open()
- if err:=db1.AutoMigrate(&mdb.Orders{},&mdb.PaymentTxClaim{},&mdb.ProviderOrder{},&mdb.CallbackDelivery{});err!=nil{t.Fatalf("MySQL5.7 migration: %v",err)}
+ // Exercise fresh install AND restart/upgrader, not just a one-off test.
+ if err:=dao.MigrateOrdersCompatible(db1);err!=nil{t.Fatalf("MySQL5.7 orders migration: %v",err)}
+ if err:=db1.AutoMigrate(&mdb.PaymentTxClaim{},&mdb.ProviderOrder{},&mdb.CallbackDelivery{});err!=nil{t.Fatalf("MySQL5.7 auxiliary migration: %v",err)}
+ if err:=dao.MigrateOrdersCompatible(db1);err!=nil{t.Fatalf("MySQL5.7 repeated orders migration: %v",err)}
  return db1,db2
 }
 func w55MySQLOrder(trade string,status int)*mdb.Orders{

@@ -2,6 +2,7 @@ package dao
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/GMWalletApp/epusdt/config"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/gookit/color"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -48,7 +50,13 @@ func MdbTableInit() {
 			{"ProviderOrder", &mdb.ProviderOrder{}},
 		}
 		for _, m := range migrations {
-			if err := Mdb.AutoMigrate(m.model); err != nil {
+			var err error
+			if m.name=="Orders" {
+				err=MigrateOrdersCompatible(Mdb)
+			} else {
+				err=Mdb.AutoMigrate(m.model)
+			}
+			if err != nil {
 				color.Red.Printf("[store_db] AutoMigrate DB(%s),err=%s\n", m.name, err)
 				return
 			}
@@ -61,6 +69,37 @@ func MdbTableInit() {
 		seedDefaultSettings()
 		seedTelegramChannelFromSettings()
 	})
+}
+
+
+// MigrateOrdersCompatible preserves MySQL 5.7 columns/index names on restart.
+// GORM's repeated AutoMigrate can incorrectly attempt DROP INDEX
+// uni_orders_trade_id even though the existing unique index is named
+// orders_trade_id_uindex. On an existing MySQL orders table we only add
+// missing columns and indexes; never rewrite existing payment data or
+// truncate legacy IDs. Fresh installs use normal AutoMigrate.
+func MigrateOrdersCompatible(db *gorm.DB) error {
+	model:=&mdb.Orders{}
+	m:=db.Migrator()
+	if db.Dialector.Name()!="mysql" || !m.HasTable(model) {
+		return db.AutoMigrate(model)
+	}
+	stmt:=&gorm.Statement{DB:db}
+	if err:=stmt.Parse(model);err!=nil{return err}
+	for _,field:=range stmt.Schema.Fields {
+		if field.DBName==""||field.IgnoreMigration {continue}
+		if m.HasColumn(model,field.DBName) {continue}
+		if err:=m.AddColumn(model,field.Name);err!=nil {
+			return fmt.Errorf("add legacy order column %s: %w",field.DBName,err)
+		}
+	}
+	for name:=range stmt.Schema.ParseIndexes() {
+		if m.HasIndex(model,name) {continue}
+		if err:=m.CreateIndex(model,name);err!=nil {
+			return fmt.Errorf("create legacy order index %s: %w",name,err)
+		}
+	}
+	return nil
 }
 
 // seedChains inserts the built-in networks as enabled rows. Uses

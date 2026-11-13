@@ -70,11 +70,11 @@ const adminProfile = {
 };
 
 export async function installSandbox(page,{ orders=[orderFixture()], readFailures=0,
-    switchFailure=null, verifyFailure=null, failLogin=false }={}) {
+    switchFailure=null, verifyFailure=null, readErrorCode=null, failLogin=false }={}) {
   const state = {
     orders:new Map(orders.map(o=>[o.tradeId,o])),
     calls:[], blocked:[], readFailures,
-    switchFailure,verifyFailure,failLogin,
+    switchFailure,verifyFailure,readErrorCode,failLogin,
     switchCount:0,verifyCount:0,loginCount:0,
   };
   await page.route('**/*',async route=>{
@@ -130,6 +130,11 @@ export async function installSandbox(page,{ orders=[orderFixture()], readFailure
       return reply(ok(checkoutData(row)));
     }
     if(path.startsWith('/pay/check-status/')&&method==='GET'){
+      if(state.readErrorCode!==null) {
+        const code=state.readErrorCode;
+        state.readErrorCode=null;
+        return reply(failed(code,'isolated server status conflict'),400);
+      }
       if(state.readFailures>0){
         state.readFailures--;
         return reply(failed(500,'isolated network simulation'),500);

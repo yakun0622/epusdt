@@ -23,12 +23,17 @@ export default defineConfig({
     { name:'chromium-desktop', use:{...devices['Desktop Chrome'],viewport:{width:1280,height:800}} },
     { name:'chromium-mobile', use:{browserName:'chromium',viewport:{width:375,height:812},isMobile:true,hasTouch:true,deviceScaleFactor:1} },
   ],
-  webServer:{
-    command:'npm run dev -- --port 4173 --strictPort',
-    cwd:resolve(here,'..'),
-    url:'http://127.0.0.1:4173',
-    reuseExistingServer:false,
-    timeout:60_000,
-    env:{EPUSDT_BACKEND:'http://127.0.0.1:1'},
-  },
+  webServer:[
+    {
+      command:'npm run dev -- --port 4173 --strictPort',
+      cwd:resolve(here,'..'),url:'http://127.0.0.1:4173',
+      reuseExistingServer:false,timeout:60_000,
+      env:{EPUSDT_BACKEND:'http://127.0.0.1:1'},
+    },
+    {
+      command:'node w61-original-server.mjs',
+      cwd:here,url:'http://127.0.0.1:4174',
+      reuseExistingServer:false,timeout:60_000,
+    },
+  ],
 });

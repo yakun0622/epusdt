@@ -52,7 +52,7 @@ func TestW61MySQLProcessWorker(t *testing.T) {
   // HTTP/process success response before it terminates this worker.
  }
  if err:=os.WriteFile(ready,[]byte(role),0600);err!=nil{t.Fatal(err)}
- select{} // forcibly terminated by the parent; no retry or callback
+ for {time.Sleep(time.Second)} // forcibly terminated by parent; no retry or callback
 }
 
 func w61CrashWorker(t *testing.T,role,trade,hash string) {

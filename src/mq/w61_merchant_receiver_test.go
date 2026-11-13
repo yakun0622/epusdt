@@ -124,7 +124,7 @@ func TestW61MerchantReceiverTimeoutAndDistinctOrderIsolation(t *testing.T){
   resp,err:=client.Do(req)
   if err!=nil{return err}
   defer resp.Body.Close()
-  if resp.StatusCode!=200{return &w61UnexpectedStatus{code:resp.StatusCode()}}
+  if resp.StatusCode!=200{return &w61UnexpectedStatus{code:resp.StatusCode}}
   return nil
  }
  if err:=call("epusdt:w61_timeout_a",35*time.Millisecond);err==nil{

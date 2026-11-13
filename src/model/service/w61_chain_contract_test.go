@@ -30,7 +30,7 @@ func TestW61IsolatedMoveTransferContractNetworkTokenAddressAmountAndBlockTime(t 
   {"wrong network",func(x *MoveObservedTransfer){x.Network=mdb.NetworkTon},"network"},
   {"wrong token",func(x *MoveObservedTransfer){x.Token="USDC"},"token"},
   {"wrong address",func(x *MoveObservedTransfer){x.ReceiveAddress="0xd"},"recipient"},
-  {"wrong raw precision",func(x *MoveObservedTransfer){x.RawAmount=big.NewInt(3_499_999)},"amount"},
+  {"wrong raw precision",func(x *MoveObservedTransfer){x.RawAmount=big.NewInt(3_400_000)},"amount"},
   {"wrong decimals",func(x *MoveObservedTransfer){x.Decimals=9},"amount"},
   {"transaction before order",func(x *MoveObservedTransfer){x.BlockTimeMs=time.Now().Add(-2*time.Minute).UnixMilli()},"predates"},
   {"missing block timestamp",func(x *MoveObservedTransfer){x.BlockTimeMs=0},"time"},

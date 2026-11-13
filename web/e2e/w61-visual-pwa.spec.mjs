@@ -19,7 +19,7 @@ function difference(before,after){
     totalPixels:a.width*a.height,ratio:Number((count/(a.width*a.height)).toFixed(5))};
 }
 
-for(const [route,label] of [['/sign-in','sign-in'],['/cashier/w61_parent','cashier']]){
+for(const [route,label] of [['/sign-in','sign-in'],['/cashier/w60_parent','cashier']]){
  test('W61 original-versus-restored browser viewport evidence: '+label,async({page,browser},info)=>{
   const state=await installSandbox(page);
   const width=info.project.name.includes('mobile')?375:1280;

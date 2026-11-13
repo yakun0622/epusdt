@@ -1,0 +1,186 @@
+name: W61 preproduction isolated integration and NO-GO release gate
+
+on:
+  push:
+    branches: [master, 'feat/w61-*']
+    paths:
+      - '.github/workflows/w61-preprod-acceptance.yml'
+      - 'scripts/w61/**'
+      - 'docs/frontend-recovery/W61-**'
+      - 'web/e2e/**'
+      - 'src/model/service/w61_*'
+      - 'src/mq/w61_*'
+      - 'src/task/w61_*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: No production artifacts, W31 or deployment changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Deny any production/payment implementation mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/heads/master ]]; then
+            BASE=HEAD^
+          else
+            BASE="$(git merge-base HEAD origin/master)"
+          fi
+          git diff --name-only "$BASE" HEAD | tee w61-changes.txt
+          if grep -E '^(src/www/|web/dist/|src/(controller|model/(dao|data|mdb|service))/.+\.go$|src/mq/(worker|queue)\.go$|src/task/[^/]+\.go$|\.github/workflows/(release|sync-www|docker-alpine)\.yml$)' w61-changes.txt | grep -v -E '^src/(model/service/w61_[^/]+_test\.go|mq/w61_[^/]+_test\.go|task/w61_[^/]+_test\.go)$'; then
+            echo "::error::W61 changed Go production code, production src/www, release workflow or W31"
+            exit 1
+          fi
+          echo "W61 is test/doc-only; no deploy permission granted."
+
+  web:
+    name: Frontend typecheck, 122+ Vitest and Vite build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  browser:
+    name: Desktop/mobile Chromium original-new visual, six locales and PWA audit
+    needs: scope
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install isolated frontend and browser test runtime
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm install --prefix web/e2e --ignore-scripts --no-package-lock --no-audit --no-fund
+      - name: Chromium platform
+        run: ./web/e2e/node_modules/.bin/playwright install --with-deps chromium
+      - name: Exercise both localhost servers and W60/W61 browser suites
+        env:
+          EPUSDT_W61_TEST_ONLY: '1'
+        run: ./web/e2e/node_modules/.bin/playwright test --config web/e2e/playwright.config.mjs
+      - name: Generate machine-readable real-browser regression report
+        if: always()
+        run: node web/e2e/write-report.mjs
+      - name: Upload original/new browser screenshots, pixel diff and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w61-chromium-visual-and-pwa
+          path: |
+            web/e2e/W60-BROWSER-RESULTS.md
+            web/e2e/playwright-results.json
+            web/e2e/playwright-report/
+            web/e2e/test-results/
+          if-no-files-found: error
+          retention-days: 21
+
+  go:
+    name: Synthetic chain guards, real local merchant HTTP and full Go race regression
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Full affected packages including W61 merchant receiver tests
+        working-directory: src
+        run: go test ./model/service ./model/data ./mq ./task ./model/dao ./controller/comm ./route -count=1
+      - name: W54/55/60/61 isolated race regression
+        working-directory: src
+        run: go test -race ./model/service ./model/data ./mq ./task -run '^Test(W54|W55|W60|W61)' -count=1
+
+  mysql57:
+    name: Real MySQL 5.7 separate OS process kill before and after COMMIT
+    needs: scope
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: w61isolated
+          MYSQL_DATABASE: epusdt_w55_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pw61isolated"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: MySQL5.7 W55 two-pool plus W61 independent-process crash/uncertain commit
+        env:
+          W55_MYSQL_DSN: root:w61isolated@tcp(127.0.0.1:3306)/epusdt_w55_ci?charset=utf8mb4&parseTime=True&loc=UTC
+        working-directory: src
+        run: go test ./model/service -run '^Test(W55MySQL57|W61MySQL57)' -count=1 -timeout=9m -v
+
+  acceptance:
+    name: W61 PASS/BLOCKED report (green CI does NOT approve production)
+    needs: [scope, web, browser, go, mysql57]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Produce automated PASS versus external BLOCKED attestations
+        shell: bash
+        env:
+          W61_SCOPE_RESULT: ${{ needs.scope.result }}
+          W61_WEB_RESULT: ${{ needs.web.result }}
+          W61_BROWSER_RESULT: ${{ needs.browser.result }}
+          W61_GO_RESULT: ${{ needs.go.result }}
+          W61_MYSQL57_RESULT: ${{ needs.mysql57.result }}
+        run: |
+          node scripts/w61/release-gate.mjs
+          cat W61-ACCEPTANCE.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload auditable release decision and blockers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w61-preproduction-pass-blocked-report
+          path: |
+            W61-ACCEPTANCE.md
+            W61-ACCEPTANCE.json
+          if-no-files-found: error
+          retention-days: 21

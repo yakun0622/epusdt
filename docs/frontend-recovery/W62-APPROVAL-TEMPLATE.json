@@ -1,0 +1,43 @@
+{
+  "phase": "W62",
+  "production_release": "NO-GO",
+  "note": "No credentials, production urls, private keys or signatures in Git",
+  "external": {
+    "EXT-TESTNET": {
+      "status": "BLOCKED",
+      "approved_by": null,
+      "evidence_sha256": null,
+      "approved_at": null
+    },
+    "EXT-OKPAY": {
+      "status": "BLOCKED",
+      "approved_by": null,
+      "evidence_sha256": null,
+      "approved_at": null
+    },
+    "EXT-MERCHANT-SANDBOX": {
+      "status": "BLOCKED",
+      "approved_by": null,
+      "evidence_sha256": null,
+      "approved_at": null
+    },
+    "EXT-PWA-UPGRADE": {
+      "status": "BLOCKED",
+      "approved_by": null,
+      "evidence_sha256": null,
+      "approved_at": null
+    },
+    "EXT-VISUAL-APPROVAL": {
+      "status": "BLOCKED",
+      "approved_by": null,
+      "evidence_sha256": null,
+      "approved_at": null
+    },
+    "EXT-ROLLBACK": {
+      "status": "BLOCKED",
+      "approved_by": null,
+      "evidence_sha256": null,
+      "approved_at": null
+    }
+  }
+}

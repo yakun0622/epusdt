@@ -154,9 +154,37 @@ jobs:
         working-directory: src
         run: go test ./model/service -run '^Test(W55MySQL57|W61MySQL57)' -count=1 -timeout=9m -v
 
+  rollback_drill:
+    name: Disposable localhost asset rollout and rollback (no deployment)
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build next frontend only in web/dist
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm run build --prefix web
+      - name: Swap and restore assets in disposable temp dir
+        run: bash scripts/w61/rehearse-rollback.sh
+      - name: Upload immutable legacy hashes and successful temp rollback proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: w61-disposable-rollback-drill
+          path: W61-ROLLBACK-DRILL.md
+          if-no-files-found: error
+          retention-days: 21
+
   acceptance:
     name: W61 PASS/BLOCKED report (green CI does NOT approve production)
-    needs: [scope, web, browser, go, mysql57]
+    needs: [scope, web, browser, go, mysql57, rollback_drill]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -171,6 +199,7 @@ jobs:
           W61_BROWSER_RESULT: ${{ needs.browser.result }}
           W61_GO_RESULT: ${{ needs.go.result }}
           W61_MYSQL57_RESULT: ${{ needs.mysql57.result }}
+          W61_ROLLBACK_DRILL_RESULT: ${{ needs.rollback_drill.result }}
         run: |
           node scripts/w61/release-gate.mjs
           cat W61-ACCEPTANCE.md >> "$GITHUB_STEP_SUMMARY"

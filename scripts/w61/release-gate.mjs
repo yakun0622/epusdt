@@ -9,6 +9,7 @@ const checks=[
   ['BROWSER','Actual Chromium / isolated Go API and legacy visual evidence'],
   ['GO','Scanner, wallet/amount/contract, settlement, callbacks and race regressions'],
   ['MYSQL57','MySQL 5.7 separate OS process crash/commit uncertainty'],
+  ['ROLLBACK_DRILL','Local disposable-directory asset rollback, no production deployment'],
 ];
 const automation=checks.map(([key,name])=>({
   id:'AUTO-'+key,description:name,

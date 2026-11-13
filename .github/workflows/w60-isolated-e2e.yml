@@ -1,0 +1,196 @@
+name: W60 isolated browser E2E and release acceptance
+
+on:
+  push:
+    branches: [master, 'feat/**']
+    paths:
+      - 'web/**'
+      - 'src/model/service/w60_release_gate_test.go'
+      - '.github/workflows/w60-isolated-e2e.yml'
+      - 'docs/frontend-recovery/W60-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: Production files and W31 exclusion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify all W60 changes against master and fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == "refs/heads/master" ]]; then
+            BASE=HEAD^
+          else
+            BASE="$(git merge-base HEAD origin/master)"
+          fi
+          git diff --name-only "$BASE" HEAD | tee /tmp/w60-changed-files.txt
+          if grep -E '^(src/www/|web/dist/|src/controller/admin/order_controller\.go$|src/model/data/order_admin_data\.go$|\.github/workflows/(sync-www|release|docker-alpine)\.yml$)' /tmp/w60-changed-files.txt; then
+            echo 'W60 release gate: production/W31/deployment changes forbidden'
+            exit 1
+          fi
+          echo 'Only test-side web, Go regression and W60 documents/workflow are allowed.'
+
+  web:
+    name: TypeScript, Vitest and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+      - run: test -f dist/index.html
+
+  browser:
+    name: Real Chromium desktop and mobile / isolated API
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install reproducible web dependencies
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Install isolated pinned Playwright test runtime
+        run: npm install --prefix web/e2e --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Install browser with dependencies
+        run: ./web/e2e/node_modules/.bin/playwright install --with-deps chromium
+      - name: Playwright protected routes, checkout, six locales, responsive screens
+        env:
+          EPUSDT_W60_TEST_ONLY: '1'
+        run: ./web/e2e/node_modules/.bin/playwright test --config web/e2e/playwright.config.mjs
+      - name: Generate strict per-run browser acceptance report
+        if: always()
+        run: node web/e2e/write-report.mjs
+      - name: Upload browser evidence (mock data only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w60-playwright-acceptance
+          path: |
+            web/e2e/W60-BROWSER-RESULTS.md
+            web/e2e/playwright-results.json
+            web/e2e/playwright-report/
+            web/e2e/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  go:
+    name: Isolated Go W50-W55 contracts, atomicity, callback and race tests
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Go public API, settlement and scanner regressions
+        working-directory: src
+        run: go test ./model/service ./model/data ./mq ./task ./model/dao ./controller/comm ./route -count=1
+      - name: Concurrency and state ownership race checks
+        working-directory: src
+        run: go test -race ./model/service ./model/data ./mq -run '^Test(W60|W55|W54)' -count=1
+
+  mysql57:
+    name: Real MySQL 5.7 W54/W55 double-pool integration
+    needs: scope
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: w60isolated
+          MYSQL_DATABASE: epusdt_w55_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pw60isolated"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Two independent DB pools and repeated MySQL 5.7 migration
+        env:
+          W55_MYSQL_DSN: root:w60isolated@tcp(127.0.0.1:3306)/epusdt_w55_ci?charset=utf8mb4&parseTime=True&loc=UTC
+        working-directory: src
+        run: go test ./model/service -run '^TestW55MySQL57' -count=1 -timeout=8m -v
+
+  acceptance:
+    name: W60 final release acceptance blocker summary
+    needs: [scope, web, browser, go, mysql57]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write runnable CI acceptance status
+        env:
+          SCOPE: ${{ needs.scope.result }}
+          WEB: ${{ needs.web.result }}
+          BROWSER: ${{ needs.browser.result }}
+          GO: ${{ needs.go.result }}
+          MYSQL57: ${{ needs.mysql57.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '# W60 CI acceptance evidence'
+            echo
+            echo "| Gate | Result |"
+            echo "|---|---|"
+            for var in SCOPE WEB BROWSER GO MYSQL57; do
+              echo "| $var | ${!var} |"
+            done
+            echo
+            echo 'Browser API mocks do NOT constitute real-chain or merchant receiver E2E.'
+            echo 'Release remains blocked until manual/sandbox payment and rollback review.'
+          } | tee W60-CI-RESULTS.md
+          for var in SCOPE WEB BROWSER GO MYSQL57; do
+            if [[ "${!var}" != success ]]; then
+              echo "BLOCK: $var = ${!var}"
+              exit 1
+            fi
+          done
+      - name: Upload independent gate summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w60-ci-release-gate
+          path: W60-CI-RESULTS.md
+          if-no-files-found: error
+          retention-days: 14

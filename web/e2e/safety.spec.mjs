@@ -6,6 +6,7 @@ test('W60 W52 10010 means a state conflict, never an expired order',async({page}
   await page.goto('/cashier/w60_parent');
   await expect(page.getByRole('alert')).toContainText('Order state changed');
   await expect(page.locator('.checkout-state')).toHaveCount(0);
+  state.readErrorCode=null; // Release the persistent isolated error explicitly.
   await page.getByRole('button',{name:'Retry',exact:true}).click();
   await expect(page.locator('.checkout-state')).toContainText('Awaiting payment');
   await expect(page.locator('.checkout-state')).not.toContainText('Order expired');

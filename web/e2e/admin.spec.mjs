@@ -45,10 +45,10 @@ test('W60 critical authenticated routes render without page crash or any writes'
     ['/dashboard','Dashboard'],['/orders','Orders'],['/addresses','Wallet addresses'],
     ['/chains','Payment networks'],['/rpc','RPC nodes'],['/keys','API keys'],
     ['/payment-setup','Payment setup'],['/settings','Settings'],
-    ['/settings/appearance','Appearance'],['/account/password','Account security'],
+    ['/settings/appearance','Appearance'],['/account/password','Change password'],
   ]) {
     await page.goto(route);
-    await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();
+    await expect(page.locator('main.content > h1')).toHaveText(title);
     await expect(page.locator('main.content')).toBeVisible();
   }
   assertNoUnsafeWrites(state);

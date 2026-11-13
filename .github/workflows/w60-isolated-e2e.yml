@@ -6,6 +6,8 @@ on:
     paths:
       - 'web/**'
       - 'src/model/service/w60_release_gate_test.go'
+      - 'src/route/router_test.go'
+      - 'src/route/admin_router_test.go'
       - '.github/workflows/w60-isolated-e2e.yml'
       - 'docs/frontend-recovery/W60-**'
   workflow_dispatch:

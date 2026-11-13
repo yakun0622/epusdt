@@ -132,7 +132,6 @@ export async function installSandbox(page,{ orders=[orderFixture()], readFailure
     if(path.startsWith('/pay/check-status/')&&method==='GET'){
       if(state.readErrorCode!==null) {
         const code=state.readErrorCode;
-        state.readErrorCode=null;
         return reply(failed(code,'isolated server status conflict'),400);
       }
       if(state.readFailures>0){

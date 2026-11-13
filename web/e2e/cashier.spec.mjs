@@ -20,9 +20,10 @@ test('W60 W52 pending checkout refresh is GET-only, no invented paid state',asyn
 });
 
 test('W60 W52 offline read recovers using GET without retrying switch/settlement',async({page})=>{
-  const state=await installSandbox(page,{readFailures:1});
+  const state=await installSandbox(page,{readFailures:100});
   await page.goto('/cashier/w60_parent');
   await expect(page.getByRole('alert')).toContainText('Payment details cannot be verified');
+  state.readFailures=0; // Recovery is explicit, regardless of StrictMode canceled requests.
   await page.getByRole('button',{name:'Retry',exact:true}).click();
   await expect(page.locator('.checkout-state')).toContainText('Awaiting payment');
   expect(state.calls.some(x=>x.method!=='GET')).toBe(false);

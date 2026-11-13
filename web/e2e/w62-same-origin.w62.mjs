@@ -104,8 +104,11 @@ test('W62 same-origin legacy PWA -> isolated migration shim -> old rollback with
  test.setTimeout(120_000);
  const node=await serverForTest();
  // Separate ephemeral context per test makes old Workbox caches unshared.
- const context=await browser.newContext({viewport:info.project.name.includes('mobile')
-   ?{width:375,height:812}:{width:1280,height:800},serviceWorkers:'allow'});
+ const isMobile=info.project.name.includes('mobile');
+ const context=await browser.newContext({
+   viewport:isMobile?{width:375,height:812}:{width:1280,height:800},
+   isMobile,hasTouch:isMobile,deviceScaleFactor:1,serviceWorkers:'allow',
+ });
  const page=await context.newPage();
  const outbound=[];
  await page.route('**/*',route=>{

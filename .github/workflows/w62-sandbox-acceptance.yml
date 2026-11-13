@@ -1,0 +1,239 @@
+name: W62 official-sandbox blockers and isolated merchant/PWA acceptance
+
+on:
+  push:
+    branches: [master, 'feat/w62-*']
+    paths:
+      - '.github/workflows/w62-sandbox-acceptance.yml'
+      - 'scripts/w62/**'
+      - 'docs/frontend-recovery/W62-**'
+      - 'web/e2e/w62-*'
+      - 'src/mq/w62_*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: W31, production assets and deployment remain unchanged
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exact W62 test/document/CI allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == 'refs/heads/master' ]]; then
+            BASE=HEAD^
+          else
+            BASE="$(git merge-base HEAD origin/master)"
+          fi
+          git diff --name-only "$BASE" HEAD | tee w62-changed-files.txt
+          while IFS= read -r path; do
+            [[ -z "$path" ]] && continue
+            if [[ "$path" =~ ^(scripts/w62/|web/e2e/w62-|docs/frontend-recovery/W62-|src/mq/w62_.*_test\.go$|\.github/workflows/w62-sandbox-acceptance\.yml$|docs/frontend-recovery/README\.md$|docs/frontend-recovery/DEVELOPMENT-BACKLOG\.md$) ]]; then
+              continue
+            fi
+            echo "::error::W62 touches forbidden production or unrelated path: $path"
+            exit 1
+          done < w62-changed-files.txt
+          echo 'W62 only changes isolated tests, evidence and workflow, not src/www or W31.'
+
+  provider:
+    name: Exact /payLink MD5 offline audit / six manual blockers
+    needs: scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: node scripts/w62/offline-provider-preflight.mjs
+      - name: Verify no real provider or testnet credentials configured by W62
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e .env
+          test ! -e scripts/w62/provider-live.json
+          test ! -e scripts/w62/testnet-secrets.json
+          echo 'No provider network call: official sandbox stays BLOCKED.'
+
+  web:
+    name: TypeScript + existing Vitest + build, without production deploy
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  merchant:
+    name: Independent Node merchant process, actual signed Go W55 callback and replay rejection
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Separate-process localhost signed delivery tests
+        working-directory: src
+        run: go test ./mq -run '^TestW62IndependentProcess' -count=1 -v
+      - name: Callback + settlement security regressions
+        working-directory: src
+        run: go test -race ./mq ./model/service -run '^Test(W62|W61|W55|W54)' -count=1
+
+  pwa:
+    name: Same-origin legacy Workbox -> test SW -> rollback, six languages desktop/mobile
+    needs: scope
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build isolated React app and install pinned Chromium runner
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm run build --prefix web
+          npm install --prefix web/e2e --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Install real Chromium
+        run: ./web/e2e/node_modules/.bin/playwright install --with-deps chromium
+      - name: Independent same-origin migration scenario (never production SW)
+        env:
+          W62_ISOLATED: '1'
+        run: ./web/e2e/node_modules/.bin/playwright test --config web/e2e/w62-playwright.config.mjs
+      - name: Upload review-only paired screenshots, service worker and browser traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w62-same-origin-visual-evidence
+          path: |
+            web/e2e/w62-results.json
+            web/e2e/w62-test-results/
+            web/e2e/w62-report/
+          if-no-files-found: warn
+          retention-days: 21
+
+  mysql57:
+    name: W61 real MySQL 5.7 cross-process crash and duplicate claim regression
+    needs: scope
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: w62isolated
+          MYSQL_DATABASE: epusdt_w55_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pw62isolated"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Independent Go worker SIGKILL before/after COMMIT
+        env:
+          W55_MYSQL_DSN: root:w62isolated@tcp(127.0.0.1:3306)/epusdt_w55_ci?charset=utf8mb4&parseTime=True&loc=UTC
+        working-directory: src
+        run: go test ./model/service -run '^Test(W55MySQL57|W61MySQL57)' -count=1 -timeout=9m -v
+
+  rollback:
+    name: Immutable src/www and temporary asset swap-and-restore
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm run build --prefix web
+          bash scripts/w61/rehearse-rollback.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w62-temp-only-rollback-evidence
+          path: W61-ROLLBACK-DRILL.md
+          if-no-files-found: error
+          retention-days: 21
+
+  acceptance:
+    name: W62 CI PASS / external production NO-GO
+    needs: [scope, provider, web, merchant, pwa, mysql57, rollback]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Machine-readable actual run evidence and six external BLOCKED decisions
+        env:
+          W62_SCOPE_RESULT: ${{ needs.scope.result }}
+          W62_WEB_RESULT: ${{ needs.web.result }}
+          W62_MERCHANT_RESULT: ${{ needs.merchant.result }}
+          W62_PWA_RESULT: ${{ needs.pwa.result }}
+          W62_MYSQL57_RESULT: ${{ needs.mysql57.result }}
+          W62_GO_RESULT: ${{ needs.merchant.result }}
+          W62_ROLLBACK_RESULT: ${{ needs.rollback.result }}
+          W62_PROVIDER_RESULT: ${{ needs.provider.result }}
+        run: |
+          node scripts/w62/release-gate.mjs
+          cat W62-ACCEPTANCE.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: w62-pass-blocked-release-decision
+          path: |
+            W62-ACCEPTANCE.json
+            W62-ACCEPTANCE.md
+          if-no-files-found: error
+          retention-days: 21

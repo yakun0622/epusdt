@@ -2,7 +2,13 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W61 隔离预发布与发布回退 NO-GO 验收（2026-11-13）
+## 当前最新交付：W62 沙箱准入核验、独立商户和同源 PWA 审查（2026-11-13）
+
+- [W62-IMPLEMENTATION.md](./W62-IMPLEMENTATION.md)：独立 Node 商户进程 + GMPay HMAC 签名验证及崩溃去重、单个测试源旧 Workbox SW 升级/回滚、六语言手机/桌面截图审查、Go W61/MySQL 5.7 回归。
+- [W62-RELEASE-APPROVAL.md](./W62-RELEASE-APPROVAL.md)：严格对照 Go `/payLink` + MD5 签名和外部 OkePay/okePay 的**不匹配** API，6 项真实沙箱/审批条件仍 BLOCKED。
+- `W62-APPROVAL-TEMPLATE.json`：不包含密钥、真实付款或个人信息的审核模板。自动化 PASS 不是生产上线许可。W31/生产 `src/www` 不变，不自动部署。
+
+## 历史交付：W61 隔离预发布与发布回退 NO-GO 验收（2026-11-13）
 
 - [W61-IMPLEMENTATION.md](./W61-IMPLEMENTATION.md)：真实 MySQL 5.7 独立进程 SIGKILL、商户本机 HTTP 去重、链/Token/金额/区块确认守卫、原版与新版浏览器双视口截图/PWA 检查。
 - [W61-RELEASE-RUNBOOK.md](./W61-RELEASE-RUNBOOK.md)：自动 PASS 与外部沙箱/真实测试网/同源 PWA/上线签字的 BLOCKED 明确分离，附临时目录回滚脚本和人工部署/回退步骤。

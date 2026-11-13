@@ -2,6 +2,14 @@
 
 > **当前状态（2026-11-10）**：W10～W16 的首轮代码、W20/W21 基础布局已落地，相关 Actions 编译及单元测试通过；浏览器对照/真实支付仍未完成，不能等同业务端到端验收。W14/W15/W16 详见本次交付记录。任务 ID 用于按切片推进和追踪；从 W44 起每个大任务一个临时分支，先在分支通过自动验证，再 squash 一次合并 master 并清理分支。开发顺序以 [DEVELOPMENT-ROADMAP.md](./DEVELOPMENT-ROADMAP.md) 为准。
 
+## 2026-11-13：W62 官方沙箱核实、独立接收器及同源 PWA 审查
+
+- Go OkPay `/payLink` + `id` + MD5 与公开相似品牌支付文档对不上；正式官方测试网 hostname / shop secret / 回调规则不得猜测，仍 BLOCKED。
+- 独立 Node 商户接收进程：用 Go 实际签名 HTTP 回调，商户验证 HMAC / 稳定 Delivery ID，业务副作用先持久化后故意丢 ACK，进程重启后重试只计一次；伪造签名和同 ID 不同交易拒绝。
+- 同源 W62 临时 Web 测试服务器，保留原始旧 `src/www` Workbox Service Worker，在同一个随机 origin 替换为仅测试的迁移 SW，然后临时回滚；没有替换生产 SW。
+- 新增六语言旧/新页面在手机和桌面上的配对截图、像素变化 JSON、人工审批模板，所有外部环境审批保持 BLOCKED，自动 CI 通过不冒充真实链上或商户付款成功。
+- 独立 W62 Actions、离线 provider 协议核验、原 W60/W61 自动测试继续保持；不改生产 `src/www`、W31 及部署脚本。
+
 ## 2026-11-13：W61 预发布隔离验收与安全发布回滚
 
 - 新增 MySQL 5.7 跨进程 SIGKILL 测试（未提交回滚/已提交响应丢失），真正数据库的原子 claim 与 callback 归属必须可读取且不能重复结算。

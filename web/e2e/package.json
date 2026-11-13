@@ -1,0 +1,9 @@
+{
+  "name": "epusdt-w60-e2e",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

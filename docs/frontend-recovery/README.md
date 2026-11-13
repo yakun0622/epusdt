@@ -2,7 +2,13 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W55 支付回调与 MySQL 5.7 安全测试（2026-11-11）
+## 当前最新交付：W60 隔离浏览器 E2E 与上线安全门禁（2026-11-13）
+
+- [W60-IMPLEMENTATION.md](./W60-IMPLEMENTATION.md)：Playwright 双视口真实 Chromium、浏览器 API 沙箱、Go 结算与回调回归、MySQL 5.7 多连接、CI 产物及安全边界。
+- [W60-RELEASE-CHECKLIST.md](./W60-RELEASE-CHECKLIST.md)：分离“自动测试成功”与“生产发布批准”，保留真实链、官方供应商沙箱、商户回调及回滚的人工阻断项。
+- W31 不实施；`web/` 仍是源码，不替换生产 `src/www/`，不自动发布。
+
+## 历史交付：W55 支付回调与 MySQL 5.7 安全测试（2026-11-11）
 
 - [W55-IMPLEMENTATION.md](./W55-IMPLEMENTATION.md)：数据库回调租约、稳定幂等 ID、OkPay 交易绑定及真实 MySQL 5.7 双连接验证。
 - 回调协议为**至少一次投递**：商户应以稳定 Delivery ID 去重；W53 只读 Hash 语义保持、W31 未实施、生产 src/www 不变。

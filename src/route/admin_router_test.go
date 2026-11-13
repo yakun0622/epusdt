@@ -1495,7 +1495,7 @@ func TestAdminSettings_ListAndUpsert(t *testing.T) {
 
 	// List settings.
 	rec := doGetAdmin(e, "/admin/api/v1/settings", token)
-	t.Logf("ListSettings: %s", rec.Body.String())
+	// Never log raw settings payloads: they may include credentials.
 	resp := assertOK(t, rec)
 	rows, ok := resp["data"].([]interface{})
 	if !ok {
@@ -1506,13 +1506,11 @@ func TestAdminSettings_ListAndUpsert(t *testing.T) {
 		item, _ := row.(map[string]interface{})
 		if item["key"] == mdb.SettingKeyOkPayShopToken {
 			foundToken = true
-			if item["value"] != "token-visible-in-settings" {
-				t.Fatalf("okpay.shop_token value = %v, want token-visible-in-settings", item["value"])
-			}
+			// Credentials must never be copied into browser-facing settings.
 		}
 	}
-	if !foundToken {
-		t.Fatalf("expected admin settings list to expose %s", mdb.SettingKeyOkPayShopToken)
+	if foundToken {
+		t.Fatalf("admin settings list must redact %s (secret returned to browser)", mdb.SettingKeyOkPayShopToken)
 	}
 
 	// Upsert a setting.

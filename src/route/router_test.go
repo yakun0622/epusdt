@@ -69,8 +69,10 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 	}
 
 	// ensure tables exist (MdbTableInit uses sync.Once, so migrate directly)
-	dao.Mdb.AutoMigrate(
+	if err:=dao.Mdb.AutoMigrate(
 		&mdb.Orders{},
+		&mdb.PaymentTxClaim{},
+		&mdb.CallbackDelivery{},
 		&mdb.WalletAddress{},
 		&mdb.AdminUser{},
 		&mdb.ApiKey{},
@@ -81,7 +83,9 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 		&mdb.ChainToken{},
 		&mdb.RpcNode{},
 		&mdb.ProviderOrder{},
-	)
+	);err!=nil {
+		t.Fatalf("W60 route test database migration: %v",err)
+	}
 
 	// reset the settings cache so stale entries from a prior test don't leak
 	_ = data.ReloadSettings()
@@ -2833,26 +2837,28 @@ func TestSwitchNetwork_OkPayFromWaitSelectPlaceholder(t *testing.T) {
 		t.Fatalf("active sub-order count after first okpay switch = %d, want 0", count)
 	}
 
+	// Once a provider checkout is selected, W51 explicitly rejects a
+	// second network switch (10019). Never create another child/provider
+	// order from an ambiguous hosted purchase.
 	secondRec := doPost(e, "/pay/switch-network", map[string]interface{}{
 		"trade_id": tradeID,
 		"token":    "USDT",
 		"network":  "solana",
 	})
-	if secondRec.Code != http.StatusOK {
-		t.Fatalf("switch okpay parent to solana failed: %d %s", secondRec.Code, secondRec.Body.String())
+	if secondRec.Code != http.StatusBadRequest {
+		t.Fatalf("provider parent must not switch to chain, got: %d %s",secondRec.Code,secondRec.Body.String())
 	}
-	secondResp := parseResp(t, secondRec)
-	secondData, _ := secondResp["data"].(map[string]interface{})
-	subTradeID, _ := secondData["trade_id"].(string)
-	if subTradeID == "" || subTradeID == tradeID {
-		t.Fatalf("expected chain child trade_id, got %q", subTradeID)
+	secondResp := parseResp(t,secondRec)
+	if code,ok:=secondResp["status_code"].(float64);!ok||int(code)!=10019 {
+		t.Fatalf("expected Go 10019 provider guard, got %v",secondResp["status_code"])
 	}
-	subOrder, err := data.GetOrderInfoByTradeId(subTradeID)
-	if err != nil {
-		t.Fatalf("load chain sub-order: %v", err)
+	parentAfter,err:=data.GetOrderInfoByTradeId(tradeID)
+	if err!=nil{t.Fatal(err)}
+	if parentAfter.PayProvider!=mdb.PaymentProviderOkPay||parentAfter.Status!=mdb.StatusWaitPay {
+		t.Fatalf("provider parent mutated after rejected chain switch %+v",parentAfter)
 	}
-	if subOrder.ParentTradeId != tradeID || subOrder.PayProvider != mdb.PaymentProviderOnChain || subOrder.Network != mdb.NetworkSolana {
-		t.Fatalf("sub-order parent/provider/network = %q/%q/%q", subOrder.ParentTradeId, subOrder.PayProvider, subOrder.Network)
+	if n,err:=data.CountActiveSubOrders(tradeID);err!=nil||n!=0 {
+		t.Fatalf("rejected switch created a child: count=%d err=%v",n,err)
 	}
 }
 

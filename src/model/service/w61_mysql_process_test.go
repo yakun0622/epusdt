@@ -11,7 +11,6 @@ import (
  "time"
 
  "github.com/GMWalletApp/epusdt/internal/testutil"
- "github.com/GMWalletApp/epusdt/model/dao"
  "github.com/GMWalletApp/epusdt/model/mdb"
  "github.com/GMWalletApp/epusdt/util/constant"
  "gorm.io/gorm"

@@ -63,7 +63,8 @@ jobs:
   browser:
     name: Real Chromium desktop and mobile / isolated API
     needs: scope
-    runs-on: ubuntu-latest
+    # Playwright 1.56 browser dependency packages are supported on Ubuntu 22.04.
+    runs-on: ubuntu-22.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6

@@ -105,7 +105,10 @@ jobs:
       - name: Separate-process localhost signed delivery tests
         working-directory: src
         run: go test ./mq -run '^TestW62IndependentProcess' -count=1 -v
-      - name: Callback + settlement security regressions
+      - name: Full W51-W62 Go affected package regressions
+        working-directory: src
+        run: go test ./model/service ./model/data ./mq ./task ./model/dao ./controller/comm ./route -count=1
+      - name: Callback + settlement security race regressions
         working-directory: src
         run: go test -race ./mq ./model/service -run '^Test(W62|W61|W55|W54)' -count=1
 

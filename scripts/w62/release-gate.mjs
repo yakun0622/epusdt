@@ -3,6 +3,7 @@
 import {readFileSync,writeFileSync} from 'node:fs';
 const required=[
  ['SCOPE','W31, src/www and deployment unchanged'],
+ ['PROVIDER','Offline exact /payLink MD5 verification and all external gates blocked'],
  ['WEB','React typecheck + existing Vitest + build'],
  ['MERCHANT','Independent Node receiver and Go signed real HTTP, restart and dedup'],
  ['PWA','Same-origin localhost legacy SW -> test-only migration -> rollback'],

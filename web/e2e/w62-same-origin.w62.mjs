@@ -56,7 +56,7 @@ async function renderLocale(page,origin,locale,info,stage){
    url:origin,sameSite:'Lax'}]);
  const res=await page.goto(origin+'/sign-in',{waitUntil:'domcontentloaded'});
  expect(res?.status()).toBe(200);
- if(stage==='candidate')await expect(page.getByLabel('Password')).toBeVisible();
+ if(stage==='candidate')await expect(page.locator('input[type="password"]').first()).toBeVisible();
  await page.waitForTimeout(stage==='old'?300:80);
  const png=await page.screenshot({animations:'disabled'});
  const filename='w62-'+stage+'-'+locale+'.png';
@@ -132,19 +132,36 @@ test('W62 same-origin legacy PWA -> isolated migration shim -> old rollback with
   // the actual old worker must be active before the candidate is served.
   await switchTo(request,node.origin,'candidate');
   await page.evaluate(async()=>{
-   const reg=await navigator.serviceWorker.getRegistration('/');
-   await reg.update();
+   // A versioned test SW URL avoids Chromium's cached update throttling.
+   // It still owns the same '/' origin scope as the original Workbox SW.
+   await navigator.serviceWorker.register('/sw.js?w62-test-migration=1',{
+     scope:'/',updateViaCache:'none'});
   });
-  await expect.poll(()=>workerVersion(page),{timeout:15_000}).toBe('w62-isolated-migration-v1');
+  await page.waitForFunction(async()=>{
+    const reg=await navigator.serviceWorker.getRegistration('/');
+    return !!reg?.active?.scriptURL.includes('w62-test-migration=1');
+  },null,{timeout:20_000});
   await page.reload({waitUntil:'domcontentloaded'});
-  await expect(page.getByLabel('Password')).toBeVisible();
+  await expect.poll(()=>workerVersion(page),{timeout:20_000}).toBe('w62-isolated-migration-v1');
+  await expect(page.locator('input[type="password"]').first()).toBeVisible();
   await candidates(page,node.origin,info,oldScreens);
   const candidateCache=await page.evaluate(()=>caches.keys());
   expect(candidateCache.filter(x=>x.startsWith('workbox-precache'))).toHaveLength(0);
   // Roll back ONLY this disposable origin. Simulate staged asset restore;
   // no production service worker or user cache is modified.
   await switchTo(request,node.origin,'old');
+  // Explicitly register the real legacy worker again in this disposable
+  // origin; assets alone are not proof the registration was rolled back.
+  await page.evaluate(async()=>{
+    await navigator.serviceWorker.register('/sw.js',{
+      scope:'/',updateViaCache:'none'});
+  });
+  await page.waitForFunction(async()=>{
+    const reg=await navigator.serviceWorker.getRegistration('/');
+    return !!reg?.active?.scriptURL.endsWith('/sw.js');
+  },null,{timeout:25_000});
   await page.goto(node.origin+'/sign-in',{waitUntil:'domcontentloaded'});
+  await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
   const legacy=await request.get(node.origin+'/manifest.webmanifest');
   expect(legacy.status()).toBe(200);
   const m=await legacy.json();
@@ -157,7 +174,7 @@ test('W62 same-origin legacy PWA -> isolated migration shim -> old rollback with
    stagedMigrationWorker:'w62-isolated-migration-v1',
    oldCacheKeysBefore:oldCache.length,
    oldWorkboxPrecacheKeysAfter:candidateCache.filter(x=>x.startsWith('workbox-precache')).length,
-   oldAssetsRestored:true,realProductionUpgrade:'BLOCKED',
+   oldAssetsRestored:true,oldServiceWorkerRestored:true,realProductionUpgrade:'BLOCKED',
    safety:'ephemeral same origin; test-only shim not shipped',
   },null,2));
  }finally{await context.close();node.stop()}

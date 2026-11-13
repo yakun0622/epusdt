@@ -8,8 +8,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/admin/api': { target: backend, changeOrigin: true },
-      '/pay': { target: backend, changeOrigin: true },
-      '/payments': { target: backend, changeOrigin: true },
+      // Regex matching avoids proxying the real SPA route /payment-setup.
+      '^/pay/': { target: backend, changeOrigin: true },
+      '^/payments/': { target: backend, changeOrigin: true },
     },
   },
   build: { outDir: 'dist' },

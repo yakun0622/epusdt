@@ -322,7 +322,9 @@ func TestProcessAptosLedgerRoundMarksMatchingUSDTOrderPaid(t *testing.T) {
 	amount := 3.1
 	tradeID := "aptos_trade_1"
 	usdt := "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b"
-	body := aptosFungibleTransferBody(t, "0xabc", 101, receive, usdt, "3100000")
+	// Construct the mock chain event only AFTER the order exists. The
+	// production validator rejects events predating order creation; building
+	// the mock before Create made this test dependent on clock granularity.
 
 	order := &mdb.Orders{
 		TradeId:         tradeID,
@@ -343,6 +345,7 @@ func TestProcessAptosLedgerRoundMarksMatchingUSDTOrderPaid(t *testing.T) {
 	if err := data.LockTransaction(mdb.NetworkAptos, receive, "USDT", tradeID, amount, time.Hour); err != nil {
 		t.Fatalf("lock transaction: %v", err)
 	}
+	body := aptosFungibleTransferBody(t, "0xabc", 101, receive, usdt, "3100000")
 
 	state, err := loadMoveWatchState(mdb.NetworkAptos)
 	if err != nil {

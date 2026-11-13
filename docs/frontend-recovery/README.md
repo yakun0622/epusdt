@@ -2,7 +2,13 @@
 
 > 文档基线：`yakun0622/epusdt@122caa9b`，2026-11-03。分析对象是原版 `src/www`，**不是**已恢复的源码。后续编码以这里的核实项和未决项为依据。
 
-## 当前最新交付：W60 隔离浏览器 E2E 与上线安全门禁（2026-11-13）
+## 当前最新交付：W61 隔离预发布与发布回退 NO-GO 验收（2026-11-13）
+
+- [W61-IMPLEMENTATION.md](./W61-IMPLEMENTATION.md)：真实 MySQL 5.7 独立进程 SIGKILL、商户本机 HTTP 去重、链/Token/金额/区块确认守卫、原版与新版浏览器双视口截图/PWA 检查。
+- [W61-RELEASE-RUNBOOK.md](./W61-RELEASE-RUNBOOK.md)：自动 PASS 与外部沙箱/真实测试网/同源 PWA/上线签字的 BLOCKED 明确分离，附临时目录回滚脚本和人工部署/回退步骤。
+- **生产 NO-GO**。真实测试网及能匹配现有 `/payLink` 的官方 OkPay 沙箱尚无独立验证材料。W31 继续不做，`src/www` 不修改，不部署。
+
+## 历史交付：W60 隔离浏览器 E2E 与上线安全门禁（2026-11-13）
 
 - [W60-IMPLEMENTATION.md](./W60-IMPLEMENTATION.md)：Playwright 双视口真实 Chromium、浏览器 API 沙箱、Go 结算与回调回归、MySQL 5.7 多连接、CI 产物及安全边界。
 - [W60-RELEASE-CHECKLIST.md](./W60-RELEASE-CHECKLIST.md)：分离“自动测试成功”与“生产发布批准”，保留真实链、官方供应商沙箱、商户回调及回滚的人工阻断项。

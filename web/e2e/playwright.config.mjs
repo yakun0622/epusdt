@@ -11,7 +11,7 @@ export default defineConfig({
   retries: 0,
   workers: process.env.CI ? 2 : undefined,
   fullyParallel: true,
-  reporter: [['list'], ['html', { outputFolder: resolve(here,'playwright-report'), open: 'never' }]],
+  reporter: [['list'], ['json', {outputFile:resolve(here,'playwright-results.json')}], ['html', { outputFolder: resolve(here,'playwright-report'), open: 'never' }]],
   outputDir: resolve(here,'test-results'),
   use: {
     baseURL: 'http://127.0.0.1:4173',

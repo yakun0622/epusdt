@@ -1,6 +1,8 @@
 name: Integration checks
 
 on:
+  push:
+    branches: [integration/upstream-master]
   pull_request:
     branches: [master]
 

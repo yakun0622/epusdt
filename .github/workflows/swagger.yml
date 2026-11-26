@@ -3,7 +3,7 @@ name: swagger
 on:
   pull_request:
   push:
-    branches: [dev, master]
+    branches: [dev, master, integration/upstream-master]
 
 permissions:
   contents: read

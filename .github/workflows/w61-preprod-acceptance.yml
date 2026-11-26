@@ -2,7 +2,7 @@ name: W61 preproduction isolated integration and NO-GO release gate
 
 on:
   push:
-    branches: [master, 'feat/w61-*']
+    branches: ['feat/w61-*']
     paths:
       - '.github/workflows/w61-preprod-acceptance.yml'
       - 'scripts/w61/**'

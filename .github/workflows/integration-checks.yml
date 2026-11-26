@@ -1,0 +1,92 @@
+name: Integration checks
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Go, ChainScanner and MySQL 5.7
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: epusdt_ci_local_test
+          MYSQL_DATABASE: epusdt_w55_ci
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: |
+            src/go.sum
+            chainscanner/go.sum
+      - name: Create a separate schema for the legacy migration fixture
+        env:
+          MYSQL_CONTAINER: ${{ job.services.mysql.id }}
+          MYSQL_PWD: epusdt_ci_local_test
+        run: |
+          docker exec -e MYSQL_PWD "$MYSQL_CONTAINER" mysql -uroot -e \
+            'CREATE DATABASE epusdt_merge_mysql57_test CHARACTER SET utf8mb4'
+      - name: Test and build EPUSDT
+        working-directory: src
+        env:
+          W55_MYSQL_DSN: "root:epusdt_ci_local_test@tcp(127.0.0.1:${{ job.services.mysql.ports['3306'] }})/epusdt_w55_ci?charset=utf8mb4&parseTime=True&loc=UTC"
+          EPUSDT_MYSQL57_STARTUP_DSN: "root:epusdt_ci_local_test@tcp(127.0.0.1:${{ job.services.mysql.ports['3306'] }})/epusdt_merge_mysql57_test"
+        run: |
+          go test -count=1 ./...
+          go build -trimpath -o "$RUNNER_TEMP/epusdt" .
+      - name: Check payment, callback and scanner concurrency
+        working-directory: src
+        run: go test -race ./model/service ./model/data ./mq ./task -run '^Test(W54|W55|W60|W61|W62)' -count=1
+      - name: Test ChainScanner
+        working-directory: chainscanner
+        run: go test -count=1 ./...
+
+  frontend:
+    name: Web build and isolated browser regression
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web --no-audit --no-fund
+      - name: Typecheck, test and build the web app
+        working-directory: web
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Install the pinned Playwright runtime and Chromium
+        run: |
+          npm install --prefix web/e2e --no-package-lock --ignore-scripts --no-audit --no-fund
+          ./web/e2e/node_modules/.bin/playwright install --with-deps chromium
+      - name: Test admin, checkout and PWA in Chromium
+        env:
+          EPUSDT_W60_TEST_ONLY: '1'
+          EPUSDT_W61_TEST_ONLY: '1'
+          W62_ISOLATED: '1'
+        run: |
+          ./web/e2e/node_modules/.bin/playwright test --config web/e2e/playwright.config.mjs
+          ./web/e2e/node_modules/.bin/playwright test --config web/e2e/w62-playwright.config.mjs

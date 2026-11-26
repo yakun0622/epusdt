@@ -1491,6 +1491,15 @@ definitions:
         example: 200
         type: integer
     type: object
+  response.CashierTxVerificationResponse:
+    properties:
+      block_transaction_id:
+        type: string
+      trade_id:
+        type: string
+      verification:
+        type: string
+    type: object
   response.CheckStatusResponse:
     properties:
       redirect_url:
@@ -1524,6 +1533,10 @@ definitions:
         description: 订单金额，按 system.amount_precision 保留小数 法币金额
         example: 100
         type: number
+      can_switch:
+        description: 能否从此交易作为父单发起选择；子订单、已支付、已过期及 OkPay 订单返回 false。服务端最终再判断。
+        example: true
+        type: boolean
       created_at:
         description: 订单创建时间 时间戳
         example: 1713264000
@@ -1590,6 +1603,33 @@ definitions:
       trade_id:
         description: epusdt订单号
         example: 3nQ9pL2xV7sK1mR8cT4yB_aZ
+        type: string
+    type: object
+  response.CheckoutReconcileResponse:
+    properties:
+      expiration_time:
+        type: integer
+      paid_confirmed:
+        type: boolean
+      provider:
+        type: string
+      provider_status:
+        type: string
+      related_status:
+        type: integer
+      related_trade_id:
+        type: string
+      requires_review:
+        type: boolean
+      root_status:
+        type: integer
+      root_trade_id:
+        type: string
+      server_time:
+        type: integer
+      status:
+        type: integer
+      trade_id:
         type: string
     type: object
   response.CreateTransactionResponse:
@@ -4297,6 +4337,32 @@ paths:
       summary: Checkout counter page
       tags:
       - Payment
+  /pay/reconcile-status/{trade_id}:
+    get:
+      description: Status 1=pending, 2=paid, 3=expired, 4=selection. paid_confirmed
+        requires the authoritative orders row (and parent for a child). provider_status
+        is the local callback ledger only, NOT a live OkPay query.
+      parameters:
+      - description: Trade ID
+        in: path
+        name: trade_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/response.CheckoutReconcileResponse'
+              type: object
+      summary: Read-only cashier reconciliation state
+      tags:
+      - Payment
   /pay/return/{trade_id}:
     get:
       description: |-
@@ -4401,6 +4467,47 @@ paths:
           schema:
             $ref: '#/definitions/response.ApiResponse'
       summary: Switch payment network
+      tags:
+      - Payment
+  /pay/verify-tx-hash/{trade_id}:
+    post:
+      consumes:
+      - application/json
+      description: Only a still-pending, consistent on-chain order can be checked.
+        The transaction is verified against the server-side network, token contract,
+        recipient, amount, confirmations and creation time. No order or provider status
+        is mutated.
+      parameters:
+      - description: Trade ID
+        in: path
+        name: trade_id
+        required: true
+        type: string
+      - description: Transaction identifier
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ManualPaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.ApiResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/response.CashierTxVerificationResponse'
+              type: object
+        "400":
+          description: 10007 already processed, 10008 missing, 10009 invalid, 10010
+            status conflict, 10013 not awaiting, 10038 chain verification failed,
+            10039 hosted provider unsupported
+          schema:
+            $ref: '#/definitions/response.ApiResponse'
+      summary: Verify public cashier chain transaction without settlement
       tags:
       - Payment
   /payments/epay/v1/order/create-transaction/submit.php:

@@ -2,7 +2,7 @@ name: W62 official-sandbox blockers and isolated merchant/PWA acceptance
 
 on:
   push:
-    branches: [master, 'feat/w62-*']
+    branches: ['feat/w62-*']
     paths:
       - '.github/workflows/w62-sandbox-acceptance.yml'
       - 'scripts/w62/**'

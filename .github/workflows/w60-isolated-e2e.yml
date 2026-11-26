@@ -2,7 +2,7 @@ name: W60 isolated browser E2E and release acceptance
 
 on:
   push:
-    branches: [master, 'feat/**']
+    branches: ['feat/w60-*']
     paths:
       - 'web/**'
       - 'src/model/service/w60_release_gate_test.go'

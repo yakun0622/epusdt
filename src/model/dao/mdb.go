@@ -1,8 +1,7 @@
 package dao
 
 import (
-	"strings"
-
+	"github.com/GMWalletApp/epusdt/config"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
@@ -10,21 +9,18 @@ import (
 var Mdb *gorm.DB
 
 func DBInit() error {
-	dbType := viper.GetString("db_type")
-	if strings.EqualFold(dbType, "postgres") {
-		if err := PostgreSQLInit(); err != nil {
-			return err
-		}
-	} else if strings.EqualFold(dbType, "sqlite") {
-		if err := SqliteInit(); err != nil {
-			return err
-		}
+	dbType, err := config.PrimaryDatabaseType(viper.GetViper())
+	if err != nil {
+		return err
+	}
+	if dbType == "mysql" {
+		err = MysqlInit()
 	} else {
-		if err := MysqlInit(); err != nil {
-			return err
-		}
+		err = SqliteInit()
+	}
+	if err != nil {
+		return err
 	}
 
-	MdbTableInit()
-	return nil
+	return MdbTableInit()
 }

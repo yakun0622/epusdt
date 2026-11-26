@@ -2,10 +2,14 @@ package mq
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
+	"os"
+
+	"github.com/GMWalletApp/epusdt/model/service"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,8 +18,71 @@ import (
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
+	"github.com/GMWalletApp/epusdt/util/http_client"
 	"github.com/GMWalletApp/epusdt/util/sign"
+	"github.com/go-resty/resty/v2"
 )
+
+func TestMain(m *testing.M) {
+	http_client.CallbackClientFactory = resty.New
+	os.Exit(m.Run())
+}
+
+func TestCleanupExpiredTransactionLocksRetriesSQLiteBusy(t *testing.T) {
+	attempts := 0
+	err := cleanupExpiredTransactionLocksWith(func() error {
+		attempts++
+		if attempts < sqliteBusyRetryAttempts {
+			return errors.New("database is locked (SQLITE_BUSY)")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("cleanup retry: %v", err)
+	}
+	if attempts != sqliteBusyRetryAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, sqliteBusyRetryAttempts)
+	}
+}
+
+func TestProcessExpiredOrdersDoesNotExpireFreshUTCOrder(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	// Merchant orders store created_at in UTC. Run the worker with a non-UTC
+	// local zone to reproduce the text-comparison bug that expired fresh orders.
+	originalLocal := time.Local
+	time.Local = time.FixedZone("CST", 8*60*60)
+	defer func() { time.Local = originalLocal }()
+
+	order := &mdb.Orders{
+		TradeId:        "trade_fresh_utc",
+		OrderId:        "order_fresh_utc",
+		Amount:         1,
+		Currency:       "CNY",
+		ActualAmount:   1.01,
+		ReceiveAddress: "wallet_fresh_utc",
+		Token:          "USDT",
+		Network:        "tron",
+		Status:         mdb.StatusWaitPay,
+	}
+	if err := dao.Mdb.Create(order).Error; err != nil {
+		t.Fatalf("create fresh order: %v", err)
+	}
+	if err := dao.Mdb.Model(order).UpdateColumn("created_at", time.Now().UTC()).Error; err != nil {
+		t.Fatalf("set UTC created_at: %v", err)
+	}
+
+	processExpiredOrders()
+
+	fresh, err := data.GetOrderInfoByTradeId(order.TradeId)
+	if err != nil {
+		t.Fatalf("reload fresh order: %v", err)
+	}
+	if fresh.Status != mdb.StatusWaitPay {
+		t.Fatalf("fresh order status = %d, want %d", fresh.Status, mdb.StatusWaitPay)
+	}
+}
 
 func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
@@ -36,7 +103,7 @@ func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) 
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create expired order: %v", err)
 	}
-	if err := dao.Mdb.Model(order).UpdateColumn("created_at", time.Now().Add(-20*time.Minute)).Error; err != nil {
+	if err := dao.Mdb.Model(order).UpdateColumn("created_at", time.Now().Add(-20*time.Minute).UTC()).Error; err != nil {
 		t.Fatalf("age expired order: %v", err)
 	}
 	if err := data.LockTransaction("tron", order.ReceiveAddress, order.Token, order.TradeId, order.ActualAmount, time.Hour); err != nil {
@@ -73,7 +140,7 @@ func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) 
 	if err := dao.Mdb.Create(placeholder).Error; err != nil {
 		t.Fatalf("create placeholder order: %v", err)
 	}
-	if err := dao.Mdb.Model(placeholder).UpdateColumn("created_at", time.Now().Add(-20*time.Minute)).Error; err != nil {
+	if err := dao.Mdb.Model(placeholder).UpdateColumn("created_at", time.Now().Add(-20*time.Minute).UTC()).Error; err != nil {
 		t.Fatalf("age placeholder order: %v", err)
 	}
 
@@ -138,7 +205,7 @@ func TestProcessExpiredOrdersKeepsPaidOrdersPaid(t *testing.T) {
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create paid order: %v", err)
 	}
-	if err := dao.Mdb.Model(order).UpdateColumn("created_at", time.Now().Add(-20*time.Minute)).Error; err != nil {
+	if err := dao.Mdb.Model(order).UpdateColumn("created_at", time.Now().Add(-20*time.Minute).UTC()).Error; err != nil {
 		t.Fatalf("age paid order: %v", err)
 	}
 
@@ -161,7 +228,7 @@ func TestDispatchPendingCallbacksHonorsBackoffAndPersistsSuccess(t *testing.T) {
 	defer cleanup()
 
 	callbackLimiter = make(chan struct{}, 1)
-	callbackInflight = sync.Map{}
+	callbackInflight.Clear()
 
 	var requestCount int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +250,9 @@ func TestDispatchPendingCallbacksHonorsBackoffAndPersistsSuccess(t *testing.T) {
 		BlockTransactionId: "block_callback",
 		CallbackNum:        1,
 		CallBackConfirm:    mdb.CallBackConfirmNo,
-		ApiKeyID:           1, // seeded by testutil.SetupTestDatabases
+		ApiKeyID:           1,
+
+		CallbackSigningKeyID: pinTestKey(t, 1),
 	}
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create callback order: %v", err)
@@ -218,7 +287,7 @@ func TestDispatchPendingCallbacksResumesRetryAfterRestart(t *testing.T) {
 	defer cleanup()
 
 	callbackLimiter = make(chan struct{}, 1)
-	callbackInflight = sync.Map{}
+	callbackInflight.Clear()
 
 	var requestCount int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +313,9 @@ func TestDispatchPendingCallbacksResumesRetryAfterRestart(t *testing.T) {
 		BlockTransactionId: "block_callback_restart",
 		CallbackNum:        0,
 		CallBackConfirm:    mdb.CallBackConfirmNo,
-		ApiKeyID:           1, // seeded by testutil.SetupTestDatabases
+		ApiKeyID:           1,
+
+		CallbackSigningKeyID: pinTestKey(t, 1),
 	}
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create callback order: %v", err)
@@ -265,7 +336,7 @@ func TestDispatchPendingCallbacksResumesRetryAfterRestart(t *testing.T) {
 	}
 
 	callbackLimiter = make(chan struct{}, 1)
-	callbackInflight = sync.Map{}
+	callbackInflight.Clear()
 
 	if err := dao.Mdb.Model(order).UpdateColumn("updated_at", time.Now().Add(-2*time.Second)).Error; err != nil {
 		t.Fatalf("age callback order for retry: %v", err)
@@ -291,7 +362,7 @@ func TestDispatchPendingCallbacksEpayRequiresAck(t *testing.T) {
 	defer cleanup()
 
 	callbackLimiter = make(chan struct{}, 1)
-	callbackInflight = sync.Map{}
+	callbackInflight.Clear()
 
 	epayKey, err := data.GetEnabledApiKey("1001")
 	if err != nil || epayKey == nil || epayKey.ID == 0 {
@@ -320,6 +391,8 @@ func TestDispatchPendingCallbacksEpayRequiresAck(t *testing.T) {
 		CallBackConfirm:    mdb.CallBackConfirmNo,
 		PaymentType:        "epay",
 		ApiKeyID:           epayKey.ID,
+
+		CallbackSigningKeyID: pinTestKey(t, epayKey.ID),
 	}
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create callback order: %v", err)
@@ -345,7 +418,7 @@ func TestDispatchPendingCallbacksEpayAcceptsTrimmedOk(t *testing.T) {
 	defer cleanup()
 
 	callbackLimiter = make(chan struct{}, 1)
-	callbackInflight = sync.Map{}
+	callbackInflight.Clear()
 
 	epayKey, err := data.GetEnabledApiKey("1001")
 	if err != nil || epayKey == nil || epayKey.ID == 0 {
@@ -374,6 +447,8 @@ func TestDispatchPendingCallbacksEpayAcceptsTrimmedOk(t *testing.T) {
 		CallBackConfirm:    mdb.CallBackConfirmNo,
 		PaymentType:        "epay",
 		ApiKeyID:           epayKey.ID,
+
+		CallbackSigningKeyID: pinTestKey(t, epayKey.ID),
 	}
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create callback order: %v", err)
@@ -406,14 +481,12 @@ func TestResolveOrderApiKeyRejectsZeroApiKeyID(t *testing.T) {
 		TradeId:  "no-api-key-id",
 		ApiKeyID: 0,
 	}
-	if _, err := resolveOrderApiKey(order); err == nil {
+	if _, err := service.ResolveOrderApiKey(order); err == nil {
 		t.Fatal("expected error for ApiKeyID=0")
 	}
 }
 
-// Happy path: when ApiKeyID points at an enabled row, resolveOrderApiKey
-// returns it.
-func TestResolveOrderApiKeyReturnsEnabledRow(t *testing.T) {
+func TestResolveOrderApiKeyReturnsPinnedCredential(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
@@ -429,8 +502,10 @@ func TestResolveOrderApiKeyReturnsEnabledRow(t *testing.T) {
 	order := &mdb.Orders{
 		TradeId:  "happy-path",
 		ApiKeyID: row.ID,
+
+		CallbackSigningKeyID: pinTestKey(t, row.ID),
 	}
-	got, err := resolveOrderApiKey(order)
+	got, err := service.ResolveOrderApiKey(order)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -484,7 +559,18 @@ func TestSendOrderCallbackGmpayUsesApiKeySecretByPid(t *testing.T) {
 		NotifyUrl:          server.URL,
 		BlockTransactionId: "block_gmpay_sign",
 		ApiKeyID:           key.ID,
-		PaymentType:        mdb.PaymentTypeGmpay,
+
+		CallbackSigningKeyID: pinTestKey(t, key.ID),
+
+		PaymentType: mdb.PaymentTypeGmpay,
+	}
+
+	// A retry for an existing order still uses its original credentials.
+	if err := data.UpdateApiKeyFields(key.ID, map[string]interface{}{"secret_key": "rotated", "status": mdb.ApiKeyStatusDisable}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.DeleteApiKeyByID(key.ID); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := sendOrderCallback(order); err != nil {
@@ -521,6 +607,96 @@ func TestSendOrderCallbackGmpayUsesApiKeySecretByPid(t *testing.T) {
 	}
 	if recvSig == wrongSig {
 		t.Fatal("signature should not match wrong api key secret")
+	}
+}
+
+func TestSendOrderCallbackDoesNotFollowRedirect(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	key := &mdb.ApiKey{Name: "redirect-key", Pid: "redirect-pid", SecretKey: "redirect-secret", Status: mdb.ApiKeyStatusEnable}
+	if err := dao.Mdb.Create(key).Error; err != nil {
+		t.Fatal(err)
+	}
+	var internalRequests atomic.Int32
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		internalRequests.Add(1)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer internal.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", internal.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+
+	order := &mdb.Orders{
+		TradeId:            "callback-no-redirect",
+		OrderId:            "callback-no-redirect",
+		Amount:             1,
+		Currency:           "CNY",
+		ActualAmount:       1,
+		ReceiveAddress:     "wallet-no-redirect",
+		Token:              "USDT",
+		Network:            "tron",
+		Status:             mdb.StatusPaySuccess,
+		NotifyUrl:          redirect.URL,
+		BlockTransactionId: "block-no-redirect",
+		ApiKeyID:           key.ID,
+		PaymentType:        mdb.PaymentTypeGmpay,
+	}
+	order.CallbackSigningKeyID = pinTestKey(t, key.ID)
+
+	if err := sendOrderCallback(order); err == nil {
+		t.Fatal("redirect response unexpectedly acknowledged")
+	}
+	if got := internalRequests.Load(); got != 0 {
+		t.Fatalf("redirect target received %d requests, want 0", got)
+	}
+}
+
+func TestGmpaySettledChildCallbackVersions(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+	key := &mdb.ApiKey{Name: "merchant", Pid: "9009", SecretKey: "merchant-test-key", Status: mdb.ApiKeyStatusEnable}
+	if err := dao.Mdb.Create(key).Error; err != nil {
+		t.Fatal(err)
+	}
+	var received map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = nil
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Error(err)
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer server.Close()
+	order := &mdb.Orders{TradeId: "root", OrderId: "merchant-order", Amount: 10, ActualAmount: 9, Token: "TRX", Network: "tron", ReceiveAddress: "parent-wallet", NotifyUrl: server.URL, Status: mdb.StatusPaySuccess, ApiKeyID: key.ID,
+		CallbackSigningKeyID: pinTestKey(t, key.ID)}
+	child := &mdb.Orders{TradeId: "child", OrderId: "child", ParentTradeId: order.TradeId, ActualAmount: 3.75, Token: "USDC", Network: "ethereum", ReceiveAddress: "child-wallet", BlockTransactionId: "paid-tx", Status: mdb.StatusPaySuccess}
+	if err := dao.Mdb.Create(child).Error; err != nil {
+		t.Fatal(err)
+	}
+	order.PayBySubId = child.ID
+	for _, version := range []int{0, 1, 2} {
+		order.CallbackVersion = version
+		if err := sendOrderCallback(order); err != nil {
+			t.Fatal(err)
+		}
+		if received["order_id"] != order.OrderId || received["trade_id"] != order.TradeId || received["token"] != child.Token || received["receive_address"] != child.ReceiveAddress || received["block_transaction_id"] != child.BlockTransactionId || received["actual_amount"] != child.ActualAmount {
+			t.Fatal(received)
+		}
+		if network, ok := received["network"]; ok != (version == 2) || ok && network != child.Network {
+			t.Fatal("network version", received)
+		}
+		want, err := sign.GetHMACSHA256(received, key.SecretKey)
+		if err != nil || received["signature"] != want {
+			t.Fatal("signature mismatch", err)
+		}
+	}
+	order.PayBySubId++
+	if err := sendOrderCallback(order); err == nil {
+		t.Fatal("missing settlement child did not defer callback")
 	}
 }
 
@@ -580,6 +756,16 @@ func TestSendOrderCallbackEpayUsesApiKeySecretByPid(t *testing.T) {
 		EpayType:           "usdt.tron",
 		PaymentType:        "epay",
 		ApiKeyID:           key.ID,
+
+		CallbackSigningKeyID: pinTestKey(t, key.ID),
+	}
+
+	// A retry for an existing order still uses its original credentials.
+	if err := data.UpdateApiKeyFields(key.ID, map[string]interface{}{"secret_key": "rotated", "status": mdb.ApiKeyStatusDisable}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.DeleteApiKeyByID(key.ID); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := sendOrderCallback(order); err != nil {
@@ -681,6 +867,8 @@ func TestSendOrderCallbackEpayPreservesStoredAlipayType(t *testing.T) {
 		EpayType:           "alipay",
 		PaymentType:        "epay",
 		ApiKeyID:           key.ID,
+
+		CallbackSigningKeyID: pinTestKey(t, key.ID),
 	}
 
 	if err := sendOrderCallback(order); err != nil {
@@ -713,7 +901,7 @@ func TestDispatchPendingCallbacksEpayAcceptsSuccessAck(t *testing.T) {
 	defer cleanup()
 
 	callbackLimiter = make(chan struct{}, 1)
-	callbackInflight = sync.Map{}
+	callbackInflight.Clear()
 
 	epayKey, err := data.GetEnabledApiKey("1001")
 	if err != nil || epayKey == nil || epayKey.ID == 0 {
@@ -742,6 +930,8 @@ func TestDispatchPendingCallbacksEpayAcceptsSuccessAck(t *testing.T) {
 		CallBackConfirm:    mdb.CallBackConfirmNo,
 		PaymentType:        mdb.PaymentTypeEpay,
 		ApiKeyID:           epayKey.ID,
+
+		CallbackSigningKeyID: pinTestKey(t, epayKey.ID),
 	}
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create callback order: %v", err)
@@ -773,4 +963,60 @@ func waitFor(t *testing.T, timeout time.Duration, fn func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("condition not satisfied before timeout")
+}
+
+func pinTestKey(t *testing.T, keyID uint64) uint64 {
+	t.Helper()
+	var key mdb.ApiKey
+	if err := dao.Mdb.First(&key, keyID).Error; err != nil {
+		t.Fatal(err)
+	}
+	version, err := dao.PinCallbackSigningKey(dao.Mdb, &key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
+
+func TestGetPendingCallbackOrdersDueDoesNotHideFreshCallback(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	now := time.Now().UTC()
+	rows := make([]mdb.Orders, 0, batchSize+1)
+	for i := 0; i < batchSize; i++ {
+		id := fmt.Sprintf("callback-backoff-%03d", i)
+		rows = append(rows, mdb.Orders{
+			TradeId:         id,
+			OrderId:         id,
+			Status:          mdb.StatusPaySuccess,
+			CallBackConfirm: mdb.CallBackConfirmNo,
+			CallbackNum:     4,
+		})
+	}
+	if err := dao.Mdb.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := dao.Mdb.Model(&mdb.Orders{}).Where("callback_num = ?", 4).UpdateColumn("updated_at", now.Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	fresh := &mdb.Orders{
+		TradeId:         "callback-fresh",
+		OrderId:         "callback-fresh",
+		Status:          mdb.StatusPaySuccess,
+		CallBackConfirm: mdb.CallBackConfirmNo,
+		CallbackNum:     0,
+	}
+	if err := dao.Mdb.Create(fresh).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := data.GetPendingCallbackOrdersDue(10, batchSize, now, 30*time.Second, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, order := range batch {
+		if order.TradeId == fresh.TradeId {
+			return
+		}
+	}
+	t.Fatalf("fresh callback was hidden by %d backoff rows", len(batch))
 }

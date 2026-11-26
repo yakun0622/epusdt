@@ -1,23 +1,42 @@
 package dao
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/GMWalletApp/epusdt/config"
-	"github.com/GMWalletApp/epusdt/util/log"
-	"github.com/gookit/color"
+	mysqlconfig "github.com/go-sql-driver/mysql"
 	"github.com/spf13/viper"
 	"gorm.io/driver/mysql"
-
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
 )
 
-// MysqlInit 数据库初始化
 func MysqlInit() error {
-	var err error
-	Mdb, err = gorm.Open(mysql.Open(config.MysqlDns), &gorm.Config{
+	host := viper.GetString("mysql_host")
+	database := viper.GetString("mysql_database")
+	if host == "" || database == "" {
+		return errors.New("MySQL requires mysql_host and mysql_database")
+	}
+	port := viper.GetString("mysql_port")
+	if port == "" {
+		port = "3306"
+	}
+
+	dsn := mysqlconfig.NewConfig()
+	dsn.User = viper.GetString("mysql_user")
+	dsn.Passwd = viper.GetString("mysql_passwd")
+	dsn.Net = "tcp"
+	dsn.Addr = net.JoinHostPort(host, port)
+	dsn.DBName = database
+	dsn.ParseTime = true
+	dsn.Loc = time.Local
+	dsn.Params = map[string]string{"charset": "utf8mb4"}
+
+	db, err := gorm.Open(mysql.Open(dsn.FormatDSN()), &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
 			TablePrefix:   viper.GetString("mysql_table_prefix"),
 			SingularTable: true,
@@ -25,32 +44,19 @@ func MysqlInit() error {
 		Logger: logger.Default.LogMode(logger.Error),
 	})
 	if err != nil {
-		color.Red.Printf("[store_db] mysql open DB,err=%s\n", err)
-		// panic(err)
-		return err
+		return fmt.Errorf("open MySQL database: %w", err)
 	}
-	if config.SQLDebug {
-		Mdb = Mdb.Debug()
-	}
-	sqlDB, err := Mdb.DB()
+	sqlDB, err := db.DB()
 	if err != nil {
-		color.Red.Printf("[store_db] mysql get DB,err=%s\n", err)
-		// panic(err)
-		time.Sleep(10 * time.Second)
-		MysqlInit()
-		return err
+		return fmt.Errorf("get MySQL connection pool: %w", err)
 	}
 	sqlDB.SetMaxIdleConns(viper.GetInt("mysql_max_idle_conns"))
 	sqlDB.SetMaxOpenConns(viper.GetInt("mysql_max_open_conns"))
 	sqlDB.SetConnMaxLifetime(time.Hour * time.Duration(viper.GetInt("mysql_max_life_time")))
-	err = sqlDB.Ping()
-	if err != nil {
-		color.Red.Printf("[store_db] mysql connDB err:%s", err.Error())
-		// panic(err)
-		time.Sleep(10 * time.Second)
-		MysqlInit()
-		return err
+
+	if config.SQLDebug {
+		db = db.Debug()
 	}
-	log.Sugar.Debug("[store_db] mysql connDB success")
+	Mdb = db
 	return nil
 }

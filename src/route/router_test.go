@@ -6,20 +6,27 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/GMWalletApp/epusdt/internal/testutil"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/GMWalletApp/epusdt/config"
+	"github.com/GMWalletApp/epusdt/middleware"
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
+	"github.com/GMWalletApp/epusdt/model/request"
 	"github.com/GMWalletApp/epusdt/model/service"
 	"github.com/GMWalletApp/epusdt/util/constant"
+	apihttp "github.com/GMWalletApp/epusdt/util/http"
 	"github.com/GMWalletApp/epusdt/util/http_client"
 	"github.com/GMWalletApp/epusdt/util/log"
 	"github.com/GMWalletApp/epusdt/util/sign"
@@ -69,22 +76,24 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 	}
 
 	// ensure tables exist (MdbTableInit uses sync.Once, so migrate directly)
-	if err:=dao.Mdb.AutoMigrate(
+	if err := dao.Mdb.AutoMigrate(
 		&mdb.Orders{},
 		&mdb.PaymentTxClaim{},
 		&mdb.CallbackDelivery{},
 		&mdb.WalletAddress{},
 		&mdb.AdminUser{},
 		&mdb.ApiKey{},
+		&mdb.CallbackSigningKey{},
 		&mdb.Setting{},
 		&mdb.RateCache{},
 		&mdb.NotificationChannel{},
 		&mdb.Chain{},
 		&mdb.ChainToken{},
 		&mdb.RpcNode{},
+		&mdb.ScannerNodeMigration{},
 		&mdb.ProviderOrder{},
-	);err!=nil {
-		t.Fatalf("W60 route test database migration: %v",err)
+	); err != nil {
+		t.Fatalf("W60 route test database migration: %v", err)
 	}
 
 	// reset the settings cache so stale entries from a prior test don't leak
@@ -109,8 +118,8 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 	}
 
 	// seed wallet addresses
-	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkTron, Address: "TTestTronAddress001", Status: mdb.TokenStatusEnable})
-	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkSolana, Address: "SolTestAddress001", Status: mdb.TokenStatusEnable})
+	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkTron, Address: testutil.TronAddress, Status: mdb.TokenStatusEnable})
+	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkSolana, Address: testutil.SolanaAddress, Status: mdb.TokenStatusEnable})
 	// seed chains so scanners know the test networks are "enabled".
 	// Use ON CONFLICT DO NOTHING: MdbTableInit (called via DBInit) uses sync.Once
 	// and may have already seeded these rows into this DB on the first test run.
@@ -151,6 +160,7 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 	})
 
 	e := echo.New()
+	e.IPExtractor = echo.ExtractIPDirect()
 	RegisterRoute(e)
 	return e
 }
@@ -317,7 +327,7 @@ func TestCreateOrderGmpayV1Solana(t *testing.T) {
 	if data["trade_id"] == nil || data["trade_id"] == "" {
 		t.Error("expected trade_id in response")
 	}
-	if data["receive_address"] != "SolTestAddress001" {
+	if data["receive_address"] != testutil.SolanaAddress {
 		t.Errorf("expected solana address, got: %v", data["receive_address"])
 	}
 	t.Logf("Order created: trade_id=%v address=%v amount=%v", data["trade_id"], data["receive_address"], data["actual_amount"])
@@ -348,6 +358,137 @@ func TestCreateOrderGmpayRejectsPrivateNotifyURL(t *testing.T) {
 	}
 	if got, _ := resp["message"].(string); got != constant.Errno[10041] {
 		t.Fatalf("message = %q, want %q", got, constant.Errno[10041])
+	}
+}
+
+func TestCreateOrderGmpayRejectsNonFiniteAmount(t *testing.T) {
+	e := setupTestEnv(t)
+	values := signGmpayFormValues(url.Values{
+		"order_id":   {"test-infinite-amount-001"},
+		"amount":     {"Inf"},
+		"token":      {"usdt"},
+		"currency":   {"cny"},
+		"network":    {"tron"},
+		"notify_url": {"https://93.184.216.34/notify"},
+	})
+
+	rec := doFormPost(e, "/payments/gmpay/v1/order/create-transaction", values)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for non-finite amount, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := int(resp["status_code"].(float64)); got != 10004 {
+		t.Fatalf("status_code = %d, want 10004; response=%v", got, resp)
+	}
+}
+
+func TestCreateOrderEpayRejectsNonFiniteAmount(t *testing.T) {
+	e := setupTestEnv(t)
+	for _, money := range []string{"Inf", "-Inf", "NaN"} {
+		t.Run(money, func(t *testing.T) {
+			values := signEpayValues(url.Values{
+				"pid":          {"1"},
+				"name":         {"epay-non-finite"},
+				"type":         {"alipay"},
+				"money":        {money},
+				"out_trade_no": {"test-epay-non-finite-" + money},
+				"notify_url":   {"https://93.184.216.34/notify"},
+			})
+			req := httptest.NewRequest(http.MethodGet, "/payments/epay/v1/order/create-transaction/submit.php?"+values.Encode(), nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("money=%q: expected 400, got %d: %s", money, rec.Code, rec.Body.String())
+			}
+			var resp map[string]interface{}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if got := int(resp["status_code"].(float64)); got != 10004 {
+				t.Fatalf("money=%q: status_code = %d, want 10004; response=%v", money, got, resp)
+			}
+		})
+	}
+}
+
+func TestCreateOrderGmpayWhitelistUsesDirectPeerByDefault(t *testing.T) {
+	e := setupTestEnv(t)
+	useRspErrorHTTPStatuses(e)
+	if err := dao.Mdb.Model(&mdb.ApiKey{}).Where("pid = ?", testAPIToken).Update("ip_whitelist", "198.51.100.8").Error; err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(signBody(map[string]interface{}{
+		"order_id":   "whitelist-forwarded-ip",
+		"amount":     1.0,
+		"token":      "usdt",
+		"currency":   "cny",
+		"network":    "solana",
+		"notify_url": "https://93.184.216.34/notify",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/payments/gmpay/v1/order/create-transaction", strings.NewReader(string(body)))
+	req.RemoteAddr = "203.0.113.50:43120"
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set(echo.HeaderXForwardedFor, "198.51.100.8")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("forged X-Forwarded-For passed merchant IP whitelist: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateOrderGmpayWhitelistWithTrustedProxy(t *testing.T) {
+	e := setupTestEnv(t)
+	useRspErrorHTTPStatuses(e)
+	extract, err := middleware.NewClientIPExtractor("192.0.2.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.IPExtractor = extract
+	if err := dao.Mdb.Model(&mdb.ApiKey{}).Where("pid = ?", testAPIToken).Update("ip_whitelist", "198.51.100.8").Error; err != nil {
+		t.Fatal(err)
+	}
+	for i, tt := range []struct {
+		name       string
+		peer       string
+		forwarded  string
+		invalidSig bool
+		want       int
+	}{
+		{"unlisted private peer", "10.20.30.40:43120", "198.51.100.8", false, http.StatusUnauthorized},
+		{"unlisted loopback peer", "127.0.0.1:43120", "198.51.100.8", false, http.StatusUnauthorized},
+		{"unlisted intermediate proxy", "192.0.2.10:43120", "198.51.100.8, 10.20.30.40", false, http.StatusUnauthorized},
+		{"trusted proxy", "192.0.2.10:43120", "198.51.100.8", false, http.StatusOK},
+		{"trusted proxy invalid signature", "192.0.2.10:43120", "198.51.100.8", true, http.StatusUnauthorized},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := signBody(map[string]interface{}{
+				"order_id": fmt.Sprintf("proxy-whitelist-%d", i), "amount": 1.0,
+				"token": "usdt", "currency": "cny", "network": "solana",
+				"notify_url": "https://93.184.216.34/notify",
+			})
+			if tt.invalidSig {
+				payload["signature"] = "invalid"
+			}
+			body, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/payments/gmpay/v1/order/create-transaction", strings.NewReader(string(body)))
+			req.RemoteAddr = tt.peer
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			req.Header.Set(echo.HeaderXForwardedFor, tt.forwarded)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("HTTP %d, want %d: %s", rec.Code, tt.want, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -426,6 +567,24 @@ func signGmpayFormValues(values url.Values) url.Values {
 	sig, _ := sign.GetHMACSHA256(params, testAPIToken)
 	values.Set("signature", sig)
 	return values
+}
+
+func TestResolveEPayTypeSelectorSupportsDottedTokenSymbol(t *testing.T) {
+	setupTestEnv(t)
+	if err := dao.Mdb.Create(&mdb.ChainToken{
+		Network:         mdb.NetworkPolygon,
+		Symbol:          "USDC.e",
+		ContractAddress: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+		Decimals:        6,
+		Enabled:         true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	token, network, matched, err := resolveEPayTypeSelector("usdc.e.polygon")
+	if err != nil || !matched || token != "usdc.e" || network != mdb.NetworkPolygon {
+		t.Fatalf("selector result token=%q network=%q matched=%t err=%v", token, network, matched, err)
+	}
 }
 
 func TestCreateOrderGmpayV1RejectsLegacyMD5Signature(t *testing.T) {
@@ -507,13 +666,7 @@ func TestCreateOrderGmpayV1PaymentTypeEpayUsesHMACSHA256(t *testing.T) {
 }
 
 func useRspErrorHTTPStatuses(e *echo.Echo) {
-	e.HTTPErrorHandler = func(err error, ctx echo.Context) {
-		if rspErr, ok := err.(*constant.RspError); ok {
-			_ = ctx.NoContent(rspErr.HttpStatus())
-			return
-		}
-		e.DefaultHTTPErrorHandler(err, ctx)
-	}
+	e.HTTPErrorHandler = apihttp.HandleError
 }
 
 // TestCreateOrderGmpayV1FormData verifies that the GMPAY create-transaction endpoint
@@ -616,6 +769,27 @@ func TestCreateOrderGmpayV1PlaceholderWithoutTokenNetwork(t *testing.T) {
 	}
 }
 
+func TestGmpayCreationStoresSignedCallbackVersion(t *testing.T) {
+	e := setupTestEnv(t)
+	const path = "/payments/gmpay/v1/order/create-transaction"
+	body := map[string]interface{}{"order_id": "callback-format", "amount": 1.0, "currency": "cny", "notify_url": "https://93.184.216.34/notify", "callback_version": 2}
+	rec := doPost(e, path, signBody(body))
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	id := parseResp(t, rec)["data"].(map[string]interface{})["trade_id"].(string)
+	row, err := data.GetOrderInfoByTradeId(id)
+	if err != nil || row.CallbackVersion != 2 {
+		t.Fatal("callback version not stored", err)
+	}
+	body["order_id"] = "unsupported-format"
+	body["callback_version"] = 3
+	rec = doPost(e, path, signBody(body))
+	if rec.Code == http.StatusOK {
+		t.Fatal("unsupported callback version accepted")
+	}
+}
+
 func TestCreateOrderGmpayV1RejectsPartialTokenNetwork(t *testing.T) {
 	e := setupTestEnv(t)
 
@@ -684,7 +858,7 @@ func TestSwitchNetworkCompletesGmpayPlaceholderInPlace(t *testing.T) {
 	if respData["payment_type"] != "gmpay" {
 		t.Fatalf("switch payment_type = %v, want gmpay", respData["payment_type"])
 	}
-	if respData["network"] != "tron" || respData["token"] != "USDT" || respData["receive_address"] != "TTestTronAddress001" {
+	if respData["network"] != "tron" || respData["token"] != "USDT" || respData["receive_address"] != testutil.TronAddress {
 		t.Fatalf("switch chain fields = %#v", respData)
 	}
 
@@ -714,13 +888,89 @@ func TestSwitchNetworkCompletesGmpayPlaceholderInPlace(t *testing.T) {
 	}
 }
 
+// Retrying the merchant's signed request after the cashier changes a placeholder
+// must preserve the original order and deadline while reporting its current state.
+func TestGMPaySignedReplayAfterCheckoutSelection(t *testing.T) {
+	e := setupTestEnv(t)
+	useRspErrorHTTPStatuses(e)
+	const path = "/payments/gmpay/v1/order/create-transaction"
+	payload := map[string]interface{}{"order_id": "retry-selection", "amount": 1.234, "currency": "cny", "notify_url": "https://93.184.216.34/notify"}
+	body := signBody(payload)
+	rec := doPost(e, path, body)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	first := parseResp(t, rec)["data"].(map[string]interface{})
+	tradeID := first["trade_id"].(string)
+	switchResult := doPost(e, "/pay/switch-network", map[string]interface{}{"trade_id": tradeID, "token": "USDT", "network": "tron"})
+	if switchResult.Code != http.StatusOK {
+		t.Fatal(switchResult.Body.String())
+	}
+	before, err := data.GetOrderInfoByTradeId(tradeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viper.Set("order_expiration_time", 45)
+	form := signGmpayFormValues(url.Values{
+		"order_id": {"retry-selection"}, "amount": {"1.234"}, "currency": {"CNY"}, "notify_url": {"https://93.184.216.34/notify"},
+	})
+	retry := doFormPost(e, path, form)
+	if retry.Code != http.StatusOK {
+		t.Fatal(retry.Body.String())
+	}
+	got := parseResp(t, retry)["data"].(map[string]interface{})
+	if got["trade_id"] != tradeID || got["receive_address"] != before.ReceiveAddress || got["expiration_time"] != first["expiration_time"] || int(got["status"].(float64)) != mdb.StatusWaitPay {
+		t.Fatalf("retry: %+v", got)
+	}
+	after, err := data.GetOrderInfoByTradeId(tradeID)
+	if err != nil || after.UpdatedAt.TimestampNano() != before.UpdatedAt.TimestampNano() {
+		t.Fatalf("retry changed order: %v", err)
+	}
+	invalid := maps.Clone(body)
+	invalid["signature"] = "invalid"
+	if result := doPost(e, path, invalid); result.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned retry: %d", result.Code)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]interface{})
+		errno  int
+	}{
+		{"other merchant", func(m map[string]interface{}) { m["pid"] = "1"; signBody(m) }, 10002},
+		{"different callback contract", func(m map[string]interface{}) { m["callback_version"] = 2; signBody(m) }, 10002},
+		{"different amount at same precision", func(m map[string]interface{}) { m["amount"] = 1.233; signBody(m) }, 10002},
+		{"checkout target submitted as original target", func(m map[string]interface{}) { m["token"] = "USDT"; m["network"] = "tron"; signBody(m) }, 10002},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			params := maps.Clone(body)
+			test.mutate(params)
+			result := doPost(e, path, params)
+			if got := parseResp(t, result); result.Code == http.StatusOK || int(got["status_code"].(float64)) != test.errno || got["data"] != nil {
+				t.Fatalf("got %d %+v", result.Code, got)
+			}
+		})
+	}
+}
+
 // getSupportedNetworks is a helper that calls GET /payments/gmpay/v1/config
 // and returns a map of network → []token for easy assertions.
 func getSupportedNetworks(t *testing.T, e *echo.Echo) map[string][]string {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/payments/gmpay/v1/config", nil)
+	return getOrderSupportedNetworks(t, e, "")
+}
+
+func getOrderSupportedNetworks(t *testing.T, e *echo.Echo, tradeID string) map[string][]string {
+	t.Helper()
+	path := "/payments/gmpay/v1/config"
+	if tradeID != "" {
+		path += "?trade_id=" + url.QueryEscape(tradeID)
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
+	if tradeID != "" && rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cashier order config can be cached: %v", rec.Header())
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("getSupportedNetworks: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -734,11 +984,68 @@ func getSupportedNetworks(t *testing.T, e *echo.Echo) map[string][]string {
 		rawTokens, _ := row["tokens"].([]interface{})
 		tokens := make([]string, 0, len(rawTokens))
 		for _, tok := range rawTokens {
-			tokens = append(tokens, tok.(string))
+			symbol := tok.(string)
+			details, _ := row["token_details"].(map[string]interface{})
+			metadata, _ := details[symbol].(map[string]interface{})
+			if metadata == nil || metadata["decimals"] == nil {
+				t.Fatalf("config missing metadata for configured %s/%s: %v", network, symbol, row)
+			}
+			tokens = append(tokens, symbol)
 		}
 		result[network] = tokens
 	}
 	return result
+}
+
+func TestPublicConfigForOrder(t *testing.T) {
+	e := setupTestEnv(t)
+	if err := data.SetSetting("rate", "rate.forced_rate_list", `{"cny":{"usdt":1,"trx":0.0001}}`, "json"); err != nil {
+		t.Fatal(err)
+	}
+	// Seed an unusable historical Solana address and a usable TRON address.
+	if err := dao.Mdb.Model(&mdb.WalletAddress{}).Where("network = ?", mdb.NetworkSolana).Update("address", "invalid").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTron, "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"); err != nil {
+		t.Fatal(err)
+	}
+
+	root := mdb.Orders{TradeId: "cashier-order", OrderId: "merchant-order", Status: mdb.StatusWaitSelect, Currency: "CNY", Amount: 1}
+	if err := dao.Mdb.Create(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	general := getSupportedNetworks(t, e)
+	if !slices.Contains(general["tron"], "TRX") || len(general["solana"]) == 0 {
+		t.Fatalf("unexpected general list: %v", general)
+	}
+	options := getOrderSupportedNetworks(t, e, root.TradeId)
+	if len(options) != 1 || !slices.Equal(options["tron"], []string{"USDT"}) {
+		t.Fatalf("wanted TRON/USDT for this amount, got %v", options)
+	}
+
+	// The order was already quoted and the family has used its one switch.
+	// Neither its parent nor child reservation depends on a new quote.
+	if err := dao.Mdb.Model(&root).Updates(map[string]any{"status": mdb.StatusWaitPay, "network": "solana", "token": "SOL", "receive_address": "11111111111111111111111111111111", "actual_amount": 2}).Error; err != nil {
+		t.Fatal(err)
+	}
+	child := mdb.Orders{TradeId: "child-reservation", OrderId: "child-merchant-order", ParentTradeId: root.TradeId,
+		Status: mdb.StatusWaitPay, Network: "tron", Token: "TRX", ReceiveAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8", ActualAmount: 20, Currency: "CNY", Amount: 1}
+	if err := dao.Mdb.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{root.TradeId, child.TradeId} {
+		options = getOrderSupportedNetworks(t, e, id)
+		if len(options) != 2 || !slices.Equal(options["solana"], []string{"SOL"}) || !slices.Equal(options["tron"], []string{"TRX"}) {
+			t.Fatalf("wanted only the existing reservations for %s, got %v", id, options)
+		}
+	}
+
+	if err := dao.Mdb.Model(&root).Update("status", mdb.StatusPaySuccess).Error; err != nil {
+		t.Fatal(err)
+	}
+	if terminal := getOrderSupportedNetworks(t, e, root.TradeId); !reflect.DeepEqual(terminal, general) {
+		t.Fatalf("terminal order changed the configuration: %v, want %v", terminal, general)
+	}
 }
 
 // TestGetSupportedAssets_ChainTokenToggle verifies that:
@@ -951,6 +1258,23 @@ func TestGetPublicConfig(t *testing.T) {
 		if _, ok := row["display_name"].(string); !ok {
 			t.Fatalf("supported_assets[%s].display_name missing or not string: %#v", network, row["display_name"])
 		}
+		details := row["token_details"].(map[string]interface{})
+		symbols := row["tokens"].([]interface{})
+		if len(details) != len(symbols) {
+			t.Fatalf("metadata and symbol list disagree on %s", network)
+		}
+		for _, symbol := range symbols {
+			if _, ok := details[symbol.(string)]; !ok {
+				t.Fatalf("missing %s/%s metadata", network, symbol)
+			}
+		}
+		if network == "tron" {
+			usdt := details["USDT"].(map[string]interface{})
+			trx := details["TRX"].(map[string]interface{})
+			if usdt["contract_address"] != "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" || usdt["decimals"] != float64(6) || trx["contract_address"] != "" {
+				t.Fatalf("invalid TRON metadata: %v", details)
+			}
+		}
 		if network == "tron" && row["display_name"] != "TRON" {
 			t.Fatalf("supported_assets.tron.display_name = %v, want TRON", row["display_name"])
 		}
@@ -1070,7 +1394,7 @@ func seedOkPayNotifyFixture(t *testing.T) *okPayNotifyFixture {
 		Amount:         1,
 		Currency:       "CNY",
 		ActualAmount:   0.15,
-		ReceiveAddress: "TTestTronAddress001",
+		ReceiveAddress: testutil.TronAddress,
 		Token:          "USDT",
 		Network:        mdb.NetworkTron,
 		Status:         mdb.StatusWaitPay,
@@ -1325,11 +1649,11 @@ func TestCreateOrderNetworkIsolation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected data, got: %v", resp)
 	}
-	if data["receive_address"] == "TTestTronAddress001" {
+	if data["receive_address"] == testutil.TronAddress {
 		t.Error("solana order should NOT get a tron address")
 	}
-	if data["receive_address"] != "SolTestAddress001" {
-		t.Errorf("expected SolTestAddress001, got %v", data["receive_address"])
+	if data["receive_address"] != testutil.SolanaAddress {
+		t.Errorf("expected %s, got %v", testutil.SolanaAddress, data["receive_address"])
 	}
 }
 
@@ -1424,7 +1748,7 @@ func TestEpaySubmitPhpRequestTokenNetworkOverrideDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay order: %v", err)
 	}
-	if order.Network != mdb.NetworkSolana || order.ReceiveAddress != "SolTestAddress001" || order.Token != "USDT" {
+	if order.Network != mdb.NetworkSolana || order.ReceiveAddress != testutil.SolanaAddress || order.Token != "USDT" {
 		t.Fatalf("epay override order fields = network %q address %q token %q", order.Network, order.ReceiveAddress, order.Token)
 	}
 	if order.PaymentType != mdb.PaymentTypeEpay {
@@ -1469,7 +1793,7 @@ func TestEpaySubmitPhpTypeSelectorOverridesRequestAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay selector order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != testutil.TronAddress {
 		t.Fatalf("selector order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.Currency != "CNY" {
@@ -1518,7 +1842,7 @@ func TestEpaySubmitPhpTypeSelectorUsesDefaultCurrencyWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay selector order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != testutil.TronAddress {
 		t.Fatalf("selector order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.Currency != "USD" {
@@ -1604,7 +1928,7 @@ func TestEpaySubmitPhpWithoutTypeKeepsCurrentBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay empty-type order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != testutil.TronAddress {
 		t.Fatalf("empty-type order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.EpayType != "" {
@@ -1761,7 +2085,7 @@ func TestEpaySubmitPhpTypeSelectorPostFormCompatible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay post selector order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != testutil.TronAddress {
 		t.Fatalf("post selector order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.EpayType != "usdt.tron" {
@@ -1786,6 +2110,66 @@ func TestCheckStatus_NotFound(t *testing.T) {
 	}
 	if got := int(resp["status_code"].(float64)); got != 10008 {
 		t.Fatalf("status_code = %d, want 10008; response=%v", got, resp)
+	}
+}
+
+func TestCheckoutFollowsPaidParentFromExpiredChild(t *testing.T) {
+	for _, paymentType := range []string{"GMPay", "EPay"} {
+		t.Run(paymentType, func(t *testing.T) {
+			e := setupTestEnv(t)
+			const merchantReturn = "https://merchant.example/return"
+			wantReturn := merchantReturn
+			var parentID string
+			if paymentType == "EPay" {
+				parentID = mustCreateEPayOrder(t, e, "epay-family", merchantReturn, url.Values{"type": {"usdt.tron"}})
+				wantReturn = "http://localhost:8080/pay/return/" + parentID
+			} else {
+				parentID = createCheckoutCounterRespTestOrder(t, e, "gmpay-family")
+			}
+			child := assertOK(t, doPost(e, "/pay/switch-network", map[string]interface{}{
+				"trade_id": parentID, "token": "USDT", "network": "solana",
+			}))["data"].(map[string]interface{})
+			childID := child["trade_id"].(string)
+			if childID == parentID {
+				t.Fatal("switch did not allocate a child")
+			}
+			statusPath := "/pay/check-status/" + childID
+			detailsPath := "/pay/checkout-counter-resp/" + childID
+			check := func(path, wantID string, wantStatus int, wantRedirect string) {
+				t.Helper()
+				body := assertOK(t, doGet(e, path))["data"].(map[string]interface{})
+				if body["trade_id"] != wantID || body["status"] != float64(wantStatus) {
+					t.Fatalf("%s: trade_id=%v status=%v", path, body["trade_id"], body["status"])
+				}
+				redirect, exists := body["redirect_url"]
+				if (wantRedirect == "" && exists) || (wantRedirect != "" && redirect != wantRedirect) {
+					t.Fatalf("%s: redirect_url=%v want %q", path, redirect, wantRedirect)
+				}
+			}
+			check(statusPath+"?checkout=true", childID, mdb.StatusWaitPay, "")
+
+			parent, err := data.GetOrderInfoByTradeId(parentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := service.OrderProcessing(&request.OrderProcessingRequest{
+				TradeId: parentID, BlockTransactionId: "original-address-payment", Network: parent.Network,
+				Token: parent.Token, ReceiveAddress: parent.ReceiveAddress, Amount: parent.ActualAmount,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			check(statusPath, childID, mdb.StatusExpired, "")
+			check(statusPath+"?checkout=true", parentID, mdb.StatusPaySuccess, wantReturn)
+			check(detailsPath, parentID, mdb.StatusPaySuccess, wantReturn)
+
+			// A held or confirming child remains visible when a parent has been paid.
+			for _, state := range []int{mdb.StatusConfirming, mdb.StatusManualReview} {
+				if err := dao.Mdb.Model(&mdb.Orders{}).Where("trade_id = ?", childID).Update("status", state).Error; err != nil {
+					t.Fatal(err)
+				}
+				check(statusPath+"?checkout=true", childID, state, "")
+			}
+		})
 	}
 }
 
@@ -2091,7 +2475,7 @@ func TestPayReturn_PaidEpayWithEmptyRedirectReturnsError(t *testing.T) {
 	}
 }
 
-func TestPayReturn_PaidEpayWithDisabledApiKeyReturnsError(t *testing.T) {
+func TestPayReturn_PaidEpayKeepsSigningKeyAfterMerchantChanges(t *testing.T) {
 	e := setupTestEnv(t)
 	tradeID := mustCreateEPayOrder(t, e, "epay-return-disabled-key-001", "https://merchant.example/return", url.Values{
 		"token":    {"usdt"},
@@ -2109,53 +2493,29 @@ func TestPayReturn_PaidEpayWithDisabledApiKeyReturnsError(t *testing.T) {
 	}
 	if err := dao.Mdb.Model(&mdb.ApiKey{}).
 		Where("id = ?", order.ApiKeyID).
-		Update("status", mdb.ApiKeyStatusDisable).Error; err != nil {
+		Updates(map[string]interface{}{"status": mdb.ApiKeyStatusDisable, "pid": "changed", "secret_key": "rotated"}).Error; err != nil {
 		t.Fatalf("disable api key: %v", err)
 	}
 
+	if err := dao.Mdb.Delete(&mdb.ApiKey{}, order.ApiKeyID).Error; err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/pay/return/"+tradeID, nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusFound {
+		t.Fatalf("paid return status %d", rec.Code)
 	}
-	resp := parseResp(t, rec)
-	if got := int(resp["status_code"].(float64)); got != 10045 {
-		t.Fatalf("status_code = %d, want 10045; response=%v", got, resp)
-	}
-}
-
-func TestPayReturn_PaidEpayWithNonNumericPidReturnsSignatureError(t *testing.T) {
-	e := setupTestEnv(t)
-	tradeID := mustCreateEPayOrder(t, e, "epay-return-bad-pid-001", "https://merchant.example/return", url.Values{
-		"token":    {"usdt"},
-		"network":  {"tron"},
-		"currency": {"cny"},
-	})
-	order, err := data.GetOrderInfoByTradeId(tradeID)
+	target, err := url.Parse(rec.Header().Get("Location"))
 	if err != nil {
-		t.Fatalf("load order: %v", err)
+		t.Fatal(err)
 	}
-	if err := dao.Mdb.Model(&mdb.Orders{}).
-		Where("trade_id = ?", tradeID).
-		Update("status", mdb.StatusPaySuccess).Error; err != nil {
-		t.Fatalf("mark order paid: %v", err)
-	}
-	if err := dao.Mdb.Model(&mdb.ApiKey{}).
-		Where("id = ?", order.ApiKeyID).
-		Update("pid", "not-a-number").Error; err != nil {
-		t.Fatalf("break pid: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/pay/return/"+tradeID, nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
-	}
-	resp := parseResp(t, rec)
-	if got := int(resp["status_code"].(float64)); got != 10046 {
-		t.Fatalf("status_code = %d, want 10046; response=%v", got, resp)
+	values := target.Query()
+	sig := values.Get("sign")
+	values.Del("sign")
+	values.Del("sign_type")
+	if values.Get("pid") != "1" || signEpayValues(values).Get("sign") != sig {
+		t.Fatal("return did not use order signing credentials")
 	}
 }
 
@@ -2336,7 +2696,7 @@ func TestSubmitTxHash_RejectsExistingHashBeforeRpc(t *testing.T) {
 		Amount:             10,
 		Currency:           "CNY",
 		ActualAmount:       1.23,
-		ReceiveAddress:     "TTestTronAddress001",
+		ReceiveAddress:     testutil.TronAddress,
 		Token:              "USDT",
 		Network:            mdb.NetworkTron,
 		Status:             mdb.StatusPaySuccess,
@@ -2846,19 +3206,21 @@ func TestSwitchNetwork_OkPayFromWaitSelectPlaceholder(t *testing.T) {
 		"network":  "solana",
 	})
 	if secondRec.Code != http.StatusBadRequest {
-		t.Fatalf("provider parent must not switch to chain, got: %d %s",secondRec.Code,secondRec.Body.String())
+		t.Fatalf("provider parent must not switch to chain, got: %d %s", secondRec.Code, secondRec.Body.String())
 	}
-	secondResp := parseResp(t,secondRec)
-	if code,ok:=secondResp["status_code"].(float64);!ok||int(code)!=10019 {
-		t.Fatalf("expected Go 10019 provider guard, got %v",secondResp["status_code"])
+	secondResp := parseResp(t, secondRec)
+	if code, ok := secondResp["status_code"].(float64); !ok || int(code) != 10019 {
+		t.Fatalf("expected Go 10019 provider guard, got %v", secondResp["status_code"])
 	}
-	parentAfter,err:=data.GetOrderInfoByTradeId(tradeID)
-	if err!=nil{t.Fatal(err)}
-	if parentAfter.PayProvider!=mdb.PaymentProviderOkPay||parentAfter.Status!=mdb.StatusWaitPay {
-		t.Fatalf("provider parent mutated after rejected chain switch %+v",parentAfter)
+	parentAfter, err := data.GetOrderInfoByTradeId(tradeID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n,err:=data.CountActiveSubOrders(tradeID);err!=nil||n!=0 {
-		t.Fatalf("rejected switch created a child: count=%d err=%v",n,err)
+	if parentAfter.PayProvider != mdb.PaymentProviderOkPay || parentAfter.Status != mdb.StatusWaitPay {
+		t.Fatalf("provider parent mutated after rejected chain switch %+v", parentAfter)
+	}
+	if n, err := data.CountActiveSubOrders(tradeID); err != nil || n != 0 {
+		t.Fatalf("rejected switch created a child: count=%d err=%v", n, err)
 	}
 }
 
@@ -3063,6 +3425,8 @@ func TestSwitchNetwork_EpayChildInheritsOriginalType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load api key: %v", err)
 	}
+	// Verify the callback format after this child has settled.
+	subOrder.Status = mdb.StatusPaySuccess
 	params, err := service.BuildEPayResultParams(subOrder, apiKeyRow)
 	if err != nil {
 		t.Fatalf("BuildEPayResultParams(): %v", err)
@@ -3141,4 +3505,172 @@ func TestSwitchNetwork_OkPayIntegration(t *testing.T) {
 		t.Fatalf("missing payment_url in response: %v", dataMap)
 	}
 	t.Logf("OkPay payment_url=%s", paymentURL)
+}
+
+func TestSignedEPaySubmitReopensOnlyOriginalPendingCashier(t *testing.T) {
+	e := setupTestEnv(t)
+	const path = "/payments/epay/v1/order/create-transaction/submit.php"
+	values := signEpayValues(url.Values{
+		"pid": {"1"}, "type": {"alipay"}, "money": {"1.00"}, "out_trade_no": {"epay-reopen"},
+		"notify_url": {"https://93.184.216.34/notify"}, "return_url": {"https://93.184.216.34/return"},
+	})
+	first := doFormPost(e, path, values)
+	location := first.Header().Get("Location")
+	if first.Code != http.StatusFound || !strings.HasPrefix(location, "/pay/checkout-counter/") {
+		t.Fatalf("initial submit: %d %s", first.Code, first.Body.String())
+	}
+	original, err := data.GetOrderInfoByOrderId("epay-reopen")
+	if err != nil || original.CreateRequestHash == "" {
+		t.Fatal("missing signed request identity", err)
+	}
+	get := func(input url.Values) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest("GET", path+"?"+input.Encode(), nil))
+		return w
+	}
+	conflict := func(w *httptest.ResponseRecorder) {
+		t.Helper()
+		if w.Header().Get("Location") != "" || !strings.Contains(w.Body.String(), `"status_code":10002`) {
+			t.Fatalf("expected duplicate, got %d %s", w.Code, w.Body.String())
+		}
+	}
+	for _, status := range []int{mdb.StatusWaitSelect, mdb.StatusWaitPay} {
+		if err := dao.Mdb.Model(original).Update("status", status).Error; err != nil {
+			t.Fatal(err)
+		}
+		r := get(values)
+		if r.Code != 302 || r.Header().Get("Location") != location {
+			t.Fatalf("repeat submit: %d %s", r.Code, r.Body.String())
+		}
+	}
+	after, err := data.GetOrderInfoByOrderId("epay-reopen")
+	if err != nil || after.CreatedAt.TimestampMilli() != original.CreatedAt.TimestampMilli() || after.CreateResponseExpiresAt != original.CreateResponseExpiresAt {
+		t.Fatal("retry changed original payment window", err)
+	}
+	for k, v := range map[string]string{"money": "2.00", "return_url": "https://93.184.216.34/changed", "type": "usdt.tron"} {
+		changed := maps.Clone(values)
+		changed.Set(k, v)
+		conflict(get(signEpayValues(changed)))
+	}
+	invalid := maps.Clone(values)
+	invalid.Set("sign", "bad")
+	if r := get(invalid); r.Code == 302 {
+		t.Fatal("invalid signature reopened the cashier")
+	}
+	for _, status := range []int{mdb.StatusPaySuccess, mdb.StatusExpired, mdb.StatusConfirming, mdb.StatusManualReview} {
+		if err := dao.Mdb.Model(original).Update("status", status).Error; err != nil {
+			t.Fatal(err)
+		}
+		conflict(get(values))
+	}
+	if err := dao.Mdb.Model(original).Updates(map[string]any{"status": mdb.StatusWaitPay, "created_at": "2000-01-01 00:00:00"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	conflict(get(values))
+}
+
+func TestMerchantDefaultNotifyURLOnSignedOrders(t *testing.T) {
+	e := setupTestEnv(t)
+	const defaultURL = "https://93.184.216.34/merchant"
+	const overrideURL = "https://93.184.216.34/override"
+	for _, protocol := range []string{"gmpay", "epay"} {
+		t.Run(protocol, func(t *testing.T) {
+			pid, success := testAPIToken, http.StatusOK
+			submit := func(id, override string) *httptest.ResponseRecorder {
+				if protocol == "epay" {
+					v := url.Values{"pid": {"1"}, "out_trade_no": {id}, "money": {"1.00"}}
+					if override != "" {
+						v.Set("notify_url", override)
+					}
+					return doFormPost(e, "/payments/epay/v1/order/create-transaction/submit.php", signEpayValues(v))
+				}
+				body := map[string]interface{}{"order_id": id, "amount": 1, "currency": "cny"}
+				if override != "" {
+					body["notify_url"] = override
+				}
+				return doPost(e, "/payments/gmpay/v1/order/create-transaction", signBody(body))
+			}
+			if protocol == "epay" {
+				pid, success = "1", http.StatusFound
+			}
+			setDefault := func(u string) {
+				t.Helper()
+				if err := dao.Mdb.Model(&mdb.ApiKey{}).Where("pid = ?", pid).Update("notify_url", u).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			check := func(id, override, want string) mdb.Orders {
+				t.Helper()
+				if r := submit(id, override); r.Code != success {
+					t.Fatalf("submit %s returned %d: %s", id, r.Code, r.Body.String())
+				}
+				order, err := data.GetOrderInfoByOrderId(id)
+				if err != nil || order.NotifyUrl != want || order.CallbackSigningKeyID == 0 {
+					t.Fatalf("callback destination or signing version missing for %s", id)
+				}
+				return *order
+			}
+			setDefault(defaultURL)
+			first := check(protocol+"-default", "", defaultURL)
+			next := check(protocol+"-override", overrideURL, overrideURL)
+			if first.CallbackSigningKeyID != next.CallbackSigningKeyID {
+				t.Fatal("two orders used different versions of the same credential")
+			}
+			setDefault("")
+			if got := check(first.OrderId, "", defaultURL); got.ID != first.ID {
+				t.Fatal("retry created another order")
+			}
+			for _, invalid := range []string{"", "invalid-default"} {
+				setDefault(invalid)
+				r := submit(protocol+"-missing", "")
+				if r.Code != http.StatusBadRequest || !strings.Contains(r.Body.String(), `"status_code":10041`) {
+					t.Fatalf("invalid effective callback: %d %s", r.Code, r.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestGMPayCredentialRotationSeparatesOldAndNewOrders(t *testing.T) {
+	e := setupTestEnv(t)
+	const path = "/payments/gmpay/v1/order/create-transaction"
+	submit := func(id, secret string) *httptest.ResponseRecorder {
+		body := map[string]interface{}{"order_id": id, "pid": testAPIToken, "amount": 1, "currency": "cny", "notify_url": "https://93.184.216.34/order"}
+		sig, err := sign.GetHMACSHA256(body, secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body["signature"] = sig
+		return doPost(e, path, body)
+	}
+	if submit("before-rotation", testAPIToken).Code != http.StatusOK {
+		t.Fatal("first order rejected")
+	}
+	merchant, err := data.GetEnabledApiKey(testAPIToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.UpdateApiKeyFields(merchant.ID, map[string]interface{}{"secret_key": "new-test-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if submit("after-rotation", testAPIToken).Code == http.StatusOK {
+		t.Fatal("old secret still accepted for new orders")
+	}
+	if submit("after-rotation", "new-test-secret").Code != http.StatusOK {
+		t.Fatal("new credential rejected")
+	}
+	for _, item := range []struct{ id, secret string }{{"before-rotation", testAPIToken}, {"after-rotation", "new-test-secret"}} {
+		order, err := data.GetOrderInfoByOrderId(item.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := service.ResolveOrderApiKey(order)
+		if err != nil || key.SecretKey != item.secret || key.Pid != merchant.Pid {
+			t.Fatal("wrong signing key for order", item.id)
+		}
+		order.ApiKeyID++
+		if key, _ := service.ResolveOrderApiKey(order); key != nil {
+			t.Fatal("credential from another merchant accepted")
+		}
+	}
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { rpcApi, type RpcCreate, type RpcNodeView, type RpcPurpose,
+import { rpcApi, rpcTypes, type RpcCreate, type RpcNodeView, type RpcPurpose,
   type RpcType, type RpcUpdate, type RpcHealthResult } from '../../api/endpoints/rpc';
 import { Button, Card, DataTable, Dialog, SelectField, TextField, useToast } from '../../components/ui';
 import { useI18n } from '../../i18n/i18n-provider';
@@ -145,10 +145,7 @@ export function RpcPage() {
     modal.kind === 'edit' ? t('edit') + ' #' + modal.row.id :
     modal.kind === 'toggle' ? t('confirm') + ' #' + modal.row.id :
     t('remove') + ' #' + modal.row.id;
-  const types: Array<{ value: RpcType; label: string }> = [
-    { value: 'http', label: 'HTTP/HTTPS' }, { value: 'ws', label: 'WS/WSS' },
-    { value: 'lite', label: 'TON lite (HTTPS config)' },
-  ];
+  const types = rpcTypes.map(value => ({ value, label: value }));
   return <div className="network-pages">
     <Card title={t('rpcTitle')} description={t('rpcHealthNote')}>
       <form className="network-toolbar" onSubmit={e => {
@@ -188,7 +185,7 @@ export function RpcPage() {
               ? health[row.id]?.last_latency_ms ?? row.last_latency_ms : '—' },
           { key: 'checked', title: t('lastChecked'), render: row => humanDate(row.last_checked_at, locale) },
           { key: 'actions', title: t('actions'), render: row => <div className="network-row-actions">
-            <Button size="sm" variant="secondary" disabled={checkId !== null || busy}
+            <Button size="sm" variant="secondary" disabled={!row.enabled || checkId !== null || busy}
               busy={checkId === row.id} onClick={() => { void runHealth(row.id); }}>{t('rpcHealth')}</Button>
             <Button size="sm" variant="ghost" disabled={checkId !== null || busy}
               onClick={() => openModal({ kind: 'edit', row })}>{t('edit')}</Button>

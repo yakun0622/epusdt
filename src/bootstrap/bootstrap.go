@@ -8,7 +8,6 @@ import (
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/GMWalletApp/epusdt/mq"
-	"github.com/GMWalletApp/epusdt/task"
 	"github.com/GMWalletApp/epusdt/telegram"
 	appjwt "github.com/GMWalletApp/epusdt/util/jwt"
 	"github.com/GMWalletApp/epusdt/util/log"
@@ -16,12 +15,15 @@ import (
 )
 
 var initOnce sync.Once
+var initErr error
 
-func InitApp() {
+func InitApp() error {
 	initOnce.Do(func() {
 		config.Init()
 		log.Init()
-		dao.Init()
+		if initErr = dao.Init(); initErr != nil {
+			return
+		}
 		logLevel := data.GetSettingString(mdb.SettingKeySystemLogLevel, mdb.SettingDefaultSystemLogLevel)
 		if err := log.SetLevel(logLevel); err != nil {
 			color.Red.Printf("[bootstrap] apply log level setting %q err=%s; fallback=%s\n", logLevel, err, mdb.SettingDefaultSystemLogLevel)
@@ -74,6 +76,6 @@ func InitApp() {
 		}
 		mq.Start()
 		go telegram.BotStart()
-		go task.Start()
 	})
+	return initErr
 }

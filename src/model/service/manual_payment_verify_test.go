@@ -15,8 +15,12 @@ import (
 	"testing"
 	"time"
 
+	scanner "github.com/GMWalletApp/ChainScanner"
+	"github.com/GMWalletApp/epusdt/config"
+	"github.com/GMWalletApp/epusdt/internal/scanneradmin"
 	"github.com/GMWalletApp/epusdt/internal/testutil"
 	"github.com/GMWalletApp/epusdt/model/dao"
+	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	addressutil "github.com/GMWalletApp/epusdt/util/address"
 	"github.com/dromara/carbon/v2"
@@ -782,6 +786,40 @@ func TestManualVerifyTronPaymentHTTPFlow(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create tron rpc node: %v", err)
 	}
+	// Move the only usable route into an embedded registry, then exercise both
+	// manual verification and lookup failure using the migrated provider.
+	store, err := scanner.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	reg, err := scanner.NewNodeRegistry(t.Context(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := reg.List(t.Context(), "tron")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range defaults {
+		if err := reg.Delete(t.Context(), n.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn := config.ScannerConnection{Embedded: true, AdminToken: strings.Repeat("a", 32), ConsumerToken: strings.Repeat("c", 32)}
+	handler, err := reg.Handler(map[string]string{"epusdt": conn.ConsumerToken}, conn.AdminToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scannerServer := httptest.NewServer(handler)
+	defer scannerServer.Close()
+	conn.URL = scannerServer.URL
+	if report, err := data.MigrateScannerNodes(t.Context(), conn, true, nil); err != nil || report.Completed != 1 {
+		t.Fatal("migration failed", report, err)
+	}
+	scanneradmin.CandidateInventory = func(ctx context.Context, _ config.ScannerConnection, network, use string) (scanner.RouteInventory, error) {
+		return scanneradmin.Inventory(ctx, conn, network, use)
+	}
 	upsertTestChainToken(t, mdb.ChainToken{
 		Network:         mdb.NetworkTron,
 		Symbol:          "USDT",
@@ -803,15 +841,66 @@ func TestManualVerifyTronPaymentHTTPFlow(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 
+	previous := LookupPaymentTransaction
+	t.Cleanup(func() { LookupPaymentTransaction = previous })
+	LookupPaymentTransaction = func(context.Context, string, string) (json.RawMessage, error) {
+		return nil, fmt.Errorf("transaction lookup unavailable")
+	}
+	if _, err := ValidateManualOrderPayment(order, txID); err == nil {
+		t.Fatal("manual payment bypassed transaction recheck")
+	}
+	LookupPaymentTransaction = func(_ context.Context, n, h string) (json.RawMessage, error) {
+		if n != "tron" || h != txID {
+			t.Fatalf("unexpected lookup request %s %s", n, h)
+		}
+		return json.RawMessage(`{"found":true}`), nil
+	}
 	got, err := ValidateManualOrderPayment(order, "0X"+strings.ToUpper(txID))
-	if err != nil {
-		t.Fatalf("ValidateManualOrderPayment(): %v", err)
+	if err != nil || got != txID || requestCalls != 6 {
+		t.Fatalf("verified=%s manual requests=%d err=%v", got, requestCalls, err)
 	}
-	if got != txID {
-		t.Fatalf("canonical tx id = %q, want %q", got, txID)
+
+}
+
+func TestManualVerifyEvmRejectsStrictTransactionWithoutPaymentChecks(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	upsertTestChainToken(t, mdb.ChainToken{
+		Network:  mdb.NetworkBase,
+		Symbol:   "ETH",
+		Decimals: 18,
+		Enabled:  true,
+	})
+	txHash := "0x" + strings.Repeat("d", 64)
+	receive := "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+	sender := "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+	order := &mdb.Orders{
+		TradeId:        "manual-evm-scanner-only",
+		OrderId:        "manual-evm-scanner-only",
+		ActualAmount:   0.1,
+		ReceiveAddress: receive,
+		Token:          "ETH",
+		Network:        mdb.NetworkBase,
+		Status:         mdb.StatusManualReview,
+		PayProvider:    mdb.PaymentProviderOnChain,
 	}
-	if requestCalls != 3 {
-		t.Fatalf("manual verify request calls = %d, want 3", requestCalls)
+	if err := dao.Mdb.Create(order).Error; err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	previous := LookupPaymentTransaction
+	t.Cleanup(func() { LookupPaymentTransaction = previous })
+	LookupPaymentTransaction = func(_ context.Context, n, h string) (json.RawMessage, error) {
+		if n != mdb.NetworkBase || h != txHash {
+			t.Fatalf("unexpected transaction lookup %s %s", n, h)
+		}
+		return json.RawMessage(fmt.Sprintf(`{"transaction":{"hash":%q,"blockHash":"0xabababababababababababababababababababababababababababababababab","blockNumber":"0xa","from":%q,"to":%q,"input":"0x","value":"0x16345785d8a0000"},"receipt":{"transactionHash":%q,"blockHash":"0xabababababababababababababababababababababababababababababababab","blockNumber":"0xa","status":"0x1","logs":[]}}`, txHash, sender, receive, txHash)), nil
+	}
+
+	got, err := ValidateManualOrderPayment(order, strings.ToUpper(txHash))
+	if err == nil || got != "" {
+		t.Fatalf("accepted transaction without checking block time and confirmations: hash=%q err=%v", got, err)
 	}
 }
 

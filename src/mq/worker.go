@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GMWalletApp/epusdt/config"
+	"github.com/GMWalletApp/epusdt/internal/diagnostics"
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
@@ -19,28 +20,13 @@ import (
 	"github.com/GMWalletApp/epusdt/util/sign"
 )
 
-// resolveOrderApiKey returns the api_keys row that signed the order.
-// Every order must carry an ApiKeyID (the default key is always seeded
-// at bootstrap, and the middleware/EPAY inline flow always stamps it).
-// If the row is missing or disabled, we return an error — using any
-// other secret would produce a signature the merchant can't verify.
-// The admin can resend the callback after fixing the key.
-func resolveOrderApiKey(order *mdb.Orders) (*mdb.ApiKey, error) {
-	row, err := service.ResolveOrderApiKey(order)
-	if err != nil || row == nil || row.ID == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("api key unavailable")
-	}
-	return row, nil
-}
-
 const batchSize = 100
 
 const sqliteBusyRetryAttempts = 3
 
 type expirableOrder struct {
+	OrderId        string
+	ParentTradeId  string
 	ID             uint64  `gorm:"column:id"`
 	TradeId        string  `gorm:"column:trade_id"`
 	Status         int     `gorm:"column:status"`
@@ -83,14 +69,16 @@ func safeRun(name string, fn func()) {
 }
 
 func processExpiredOrders() {
-	expirationCutoff := time.Now().Add(-config.GetOrderExpirationTimeDuration())
+	// SQLite compares timestamps as text. Order timestamps are stored in UTC,
+	// so the cutoff must use the same location or a new order can look expired.
+	expirationCutoff := time.Now().UTC().Add(-config.GetOrderExpirationTimeDuration())
 	for {
 		var orders []expirableOrder
 		err := withSQLiteBusyRetry(func() error {
 			return dao.Mdb.Model(&mdb.Orders{}).
-				Select("id", "trade_id", "status", "network", "receive_address", "token", "actual_amount", "pay_provider").
+				Select("id", "trade_id", "parent_trade_id", "order_id", "status", "network", "receive_address", "token", "actual_amount", "pay_provider").
 				Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusWaitSelect}).
-				Where("created_at <= ?", expirationCutoff).
+				Where(data.PrimaryTimestampExpr("created_at")+" <= ?", data.PrimaryTimestampBound(expirationCutoff)).
 				Order("id asc").
 				Limit(batchSize).
 				Find(&orders).Error
@@ -112,6 +100,7 @@ func processExpiredOrders() {
 			if !expired {
 				continue
 			}
+			diagnostics.Record(diagnostics.Event{Event: "order.expired", Status: mdb.StatusExpired, Trade: order.TradeId, MerchantOrder: order.OrderId, Parent: order.ParentTradeId, Order: order.ID, Network: order.Network, Token: order.Token})
 			// StatusWaitSelect placeholders have not reserved a wallet or
 			// amount yet, so there is no transaction lock to release.
 			if order.Status == mdb.StatusWaitSelect {
@@ -139,7 +128,7 @@ func dispatchPendingCallbacks() {
 	var orders []data.PendingCallbackOrder
 	err := withSQLiteBusyRetry(func() error {
 		var innerErr error
-		orders, innerErr = data.GetPendingCallbackOrders(maxRetry, batchSize)
+		orders, innerErr = data.GetPendingCallbackOrdersDue(maxRetry, batchSize, time.Now().UTC(), config.GetCallbackRetryBaseDuration(), 5*time.Minute)
 		return innerErr
 	})
 	if err != nil {
@@ -159,7 +148,7 @@ func dispatchPendingCallbacks() {
 
 		select {
 		case callbackLimiter <- struct{}{}:
-			go processCallback(tradeID)
+			go processCallback(tradeID, callbackLimiter)
 		default:
 			callbackInflight.Delete(tradeID)
 			return
@@ -167,45 +156,51 @@ func dispatchPendingCallbacks() {
 	}
 }
 
-func processCallback(tradeID string) {
+func processCallback(tradeID string, limiter <-chan struct{}) {
 	defer func() {
-		<-callbackLimiter
+		<-limiter
 		callbackInflight.Delete(tradeID)
 	}()
 	// Each attempt has a random lease token; the merchant-facing delivery ID
 	// stays the SAME for every retry and every process instance.
-	randomToken:=make([]byte,16)
-	if _,err:=rand.Read(randomToken);err!=nil {
-		log.Sugar.Errorf("[mq] callback lease token failed trade_id=%s err=%v",tradeID,err)
+	randomToken := make([]byte, 16)
+	if _, err := rand.Read(randomToken); err != nil {
+		log.Sugar.Errorf("[mq] callback lease token failed trade_id=%s err=%v", tradeID, err)
 		return
 	}
-	token:=hex.EncodeToString(randomToken)
-	order,claimed,err:=data.ClaimMerchantCallback(dao.Mdb,tradeID,token,time.Now(),
-		config.GetOrderNoticeMaxRetry(),config.GetCallbackRetryBaseDuration())
-	if err!=nil {
-		log.Sugar.Errorf("[mq] claim callback failed trade_id=%s err=%v",tradeID,err)
+	token := hex.EncodeToString(randomToken)
+	order, claimed, err := data.ClaimMerchantCallback(dao.Mdb, tradeID, token, time.Now(),
+		config.GetOrderNoticeMaxRetry(), config.GetCallbackRetryBaseDuration())
+	if err != nil {
+		log.Sugar.Errorf("[mq] claim callback failed trade_id=%s err=%v", tradeID, err)
 		return
 	}
-	if !claimed{return}
-	sendErr:=sendOrderCallback(order)
-	if sendErr!=nil {
+	if !claimed {
+		return
+	}
+	sendErr := sendOrderCallback(order)
+	if sendErr != nil {
 		log.Sugar.Warnf("[mq] callback request failed trade_id=%s attempt=%d err=%v",
-			tradeID,order.CallbackNum+1,sendErr)
+			tradeID, order.CallbackNum+1, sendErr)
 	}
-	applied,err:=data.FinishMerchantCallback(dao.Mdb,tradeID,token,sendErr==nil,time.Now())
-	if err!=nil {
+	applied, err := data.FinishMerchantCallback(dao.Mdb, tradeID, token, sendErr == nil, time.Now())
+	if err != nil {
+		diagnostics.Record(diagnostics.Event{Event: "callback.persist", Trade: tradeID, Outcome: "failed"})
 		// A delivered HTTP response with an uncertain database commit must
 		// not become a new payment; retry will reuse the stable delivery ID.
-		log.Sugar.Errorf("[mq] persist callback result failed trade_id=%s err=%v",tradeID,err)
-	}else if !applied {
-		log.Sugar.Warnf("[mq] callback lease no longer owned trade_id=%s",tradeID)
+		log.Sugar.Errorf("[mq] persist callback result failed trade_id=%s err=%v", tradeID, err)
+	} else if !applied {
+		log.Sugar.Warnf("[mq] callback lease no longer owned trade_id=%s", tradeID)
 	}
 }
 
 func sendOrderCallback(order *mdb.Orders) error {
-	apiKeyRow, err := resolveOrderApiKey(order)
-	if err != nil || apiKeyRow == nil || apiKeyRow.ID == 0 {
-		return errors.New("no api key row available for callback")
+	event := diagnostics.Event{Event: "callback.attempt", Order: order.ID, Trade: order.TradeId, MerchantOrder: order.OrderId, Hash: order.BlockTransactionId, Network: order.Network, Attempt: order.CallbackNum + 1, Outcome: "prepare_failed"}
+	started := time.Now()
+	defer func() { event.Latency = time.Since(started).Milliseconds(); diagnostics.Record(event) }()
+	apiKeyRow, err := service.ResolveOrderApiKey(order)
+	if err != nil {
+		return err
 	}
 
 	switch {
@@ -215,31 +210,53 @@ func sendOrderCallback(order *mdb.Orders) error {
 			return err
 		}
 
-		epayResp, err := http_client.GetHttpClient().R().SetQueryParams(formData).SetHeader("X-Epusdt-Delivery-ID",data.MerchantCallbackDeliveryID(order.TradeId)).Get(order.NotifyUrl)
+		event.Outcome = "transport_error"
+		epayResp, err := http_client.GetCallbackHttpClient().R().
+			SetQueryParams(formData).
+			SetHeader("X-Epusdt-Delivery-ID", data.MerchantCallbackDeliveryID(order.TradeId)).
+			Get(order.NotifyUrl)
 		if err != nil {
-			return err
+			// HTTP errors can include the full signed callback URL.
+			return errors.New("EPay callback request failed")
 		}
-		log.Sugar.Infof("[mq] epay notify_url response status: %d, body: %s", epayResp.StatusCode(), string(epayResp.Body()))
+		log.Sugar.Infof("[mq] epay notify_url response status: %d", epayResp.StatusCode())
+		event.HTTP = epayResp.StatusCode()
+		event.Outcome = "http_error"
 		if epayResp.StatusCode() != http.StatusOK {
 			return errors.New(epayResp.Status())
 		}
 		if !isCallbackAck(epayResp.Body()) {
+			event.Outcome = "invalid_ack"
 			return errors.New("not ok")
 		}
 
 	default:
 
-		client := http_client.GetHttpClient()
+		settled := order
+		if order.PayBySubId != 0 {
+			var child mdb.Orders
+			if err := dao.Mdb.Where("id = ? AND parent_trade_id = ? AND status = ?", order.PayBySubId, order.TradeId, mdb.StatusPaySuccess).
+				Take(&child).Error; err != nil {
+				return err
+			}
+			settled = &child
+			event.Network = child.Network
+			event.Hash = child.BlockTransactionId
+		}
+		client := http_client.GetCallbackHttpClient()
 		orderResp := response.OrderNotifyResponse{
 			Pid:                apiKeyRow.Pid,
 			TradeId:            order.TradeId,
 			OrderId:            order.OrderId,
 			Amount:             order.Amount,
-			ActualAmount:       order.ActualAmount,
-			ReceiveAddress:     order.ReceiveAddress,
-			Token:              order.Token,
-			BlockTransactionId: order.BlockTransactionId,
+			ActualAmount:       settled.ActualAmount,
+			ReceiveAddress:     settled.ReceiveAddress,
+			Token:              settled.Token,
+			BlockTransactionId: settled.BlockTransactionId,
 			Status:             mdb.StatusPaySuccess,
+		}
+		if order.CallbackVersion == 2 {
+			orderResp.Network = settled.Network
 		}
 		signature, err := sign.GetHMACSHA256(orderResp, apiKeyRow.SecretKey)
 		if err != nil {
@@ -247,22 +264,27 @@ func sendOrderCallback(order *mdb.Orders) error {
 		}
 		orderResp.Signature = signature
 
+		event.Outcome = "transport_error"
 		resp, err := client.R().
 			SetHeader("powered-by", "Epusdt(https://github.com/GMwalletApp/epusdt)").
 			SetBody(orderResp).
-			SetHeader("X-Epusdt-Delivery-ID",data.MerchantCallbackDeliveryID(order.TradeId)).
+			SetHeader("X-Epusdt-Delivery-ID", data.MerchantCallbackDeliveryID(order.TradeId)).
 			Post(order.NotifyUrl)
 		if err != nil {
 			return err
 		}
+		event.HTTP = resp.StatusCode()
+		event.Outcome = "http_error"
 		if resp.StatusCode() != http.StatusOK {
 			return errors.New(resp.Status())
 		}
 		if !isCallbackAck(resp.Body()) {
+			event.Outcome = "invalid_ack"
 			return errors.New("not ok")
 		}
 	}
 
+	event.Outcome = "acknowledged"
 	return nil
 }
 
@@ -272,9 +294,13 @@ func isCallbackAck(body []byte) bool {
 }
 
 func cleanupExpiredTransactionLocks() {
-	if err := data.CleanupExpiredTransactionLocks(); err != nil {
+	if err := cleanupExpiredTransactionLocksWith(data.CleanupExpiredTransactionLocks); err != nil {
 		log.Sugar.Errorf("[mq] cleanup expired transaction locks failed: %v", err)
 	}
+}
+
+func cleanupExpiredTransactionLocksWith(fn func() error) error {
+	return withSQLiteBusyRetry(fn)
 }
 
 func withSQLiteBusyRetry(fn func() error) error {

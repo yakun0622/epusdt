@@ -1,6 +1,7 @@
 package data
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -171,7 +172,7 @@ func SetSetting(group, key, value, valueType string) error {
 
 // DeleteSetting removes a setting row and drops the cache entry.
 func DeleteSetting(key string) error {
-	if err := dao.Mdb.Where("key = ?", key).Delete(&mdb.Setting{}).Error; err != nil {
+	if err := dao.Mdb.Where("`key` = ?", key).Delete(&mdb.Setting{}).Error; err != nil {
 		return err
 	}
 	settingsCacheMu.Lock()
@@ -280,6 +281,59 @@ func GetOkPayAllowTokens() []string {
 		return []string{"USDT", "TRX"}
 	}
 	return out
+}
+
+// X Layer settings helpers (OKX Onchain OS Payment hosted checkout).
+// Token symbols are normalized to upper-case ASCII: the doc's USD₮0 is
+// exposed as USDT0.
+func GetXLayerEnabled() bool {
+	return GetSettingBool(mdb.SettingKeyXLayerEnabled, false)
+}
+
+func GetXLayerAPIKey() string {
+	return strings.TrimSpace(GetSettingString(mdb.SettingKeyXLayerAPIKey, ""))
+}
+
+func GetXLayerAPISecret() string {
+	return strings.TrimSpace(GetSettingString(mdb.SettingKeyXLayerAPISecret, ""))
+}
+
+func GetXLayerPassphrase() string {
+	return strings.TrimSpace(GetSettingString(mdb.SettingKeyXLayerPassphrase, ""))
+}
+
+// GetXLayerAPIURL was removed (2026-11-21 4th review): the Onchain OS
+// Payment base URL is the fixed xlayerAPIBaseURL constant in
+// model/service/xlayer_service.go; the legacy xlayer.api_url settings
+// key is no longer read.
+
+func GetXLayerReturnURL() string {
+	return strings.TrimSpace(GetSettingString(mdb.SettingKeyXLayerReturnURL, ""))
+}
+
+func GetXLayerTimeoutSeconds() int {
+	return GetSettingInt(mdb.SettingKeyXLayerTimeoutSeconds, 10)
+}
+
+func GetXLayerToAddress() string {
+	return strings.TrimSpace(GetSettingString(mdb.SettingKeyXLayerToAddress, ""))
+}
+
+func GetXLayerAllowTokens() []string {
+	tokens := []string{}
+	for _, item := range strings.Split(GetSettingString(mdb.SettingKeyXLayerAllowTokens, ""), ",") {
+		switch symbol := strings.ToUpper(strings.TrimSpace(item)); symbol {
+		case "USDC", "USDT0", "USDG":
+			if !slices.Contains(tokens, symbol) {
+				tokens = append(tokens, symbol)
+			}
+		}
+	}
+	return tokens
+}
+
+func XLayerConfigured() bool {
+	return GetXLayerAPIKey() != "" && GetXLayerAPISecret() != "" && GetXLayerPassphrase() != "" && GetXLayerToAddress() != ""
 }
 
 // ListSettingsByGroup returns all rows for a given group (empty group = all),

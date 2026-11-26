@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/GMWalletApp/epusdt/util/constant"
 	appLog "github.com/GMWalletApp/epusdt/util/log"
 	"github.com/GMWalletApp/epusdt/util/security"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/labstack/echo/v4"
 )
 
@@ -46,12 +48,26 @@ import (
 //     okpay.timeout_seconds  (int)    — outbound OkPay API timeout in seconds
 //     okpay.allow_tokens     (string) — comma-separated allowed tokens, e.g. "USDT,TRX"
 //
+//   - group=xlayer:
+//     xlayer.enabled         (bool)   — enable X Layer (OKX Onchain OS Payment) as a switch-network payment option
+//     xlayer.api_key         (string) — OKX API Key
+//     xlayer.api_secret      (string) — OKX API Secret (signing key)
+//     xlayer.passphrase      (string) — OKX API passphrase
+//     xlayer.return_url      (string) — optional default browser return URL after payment
+//     xlayer.timeout_seconds (int)    — outbound X Layer API timeout in seconds
+//     xlayer.to_address      (string) — merchant receiving address sent in every OKX create request
+//     xlayer.allow_tokens    (string) — comma-separated accepted tokens from USDC, USDT0 and USDG
+//
 //   - group=brand:
 //     brand.checkout_name    (string) — cashier display name (preferred)
 //     brand.logo_url         (string) — logo image URL
 //     brand.site_title       (string) — payment page title / website title (preferred)
 //     brand.success_copy     (string) — text shown on payment success (preferred)
 //     brand.support_url      (string) — support / help URL
+//     brand.cashier_script   (string) — optional public support widget installation snippet
+//     brand.withdrawal_reminder_enabled (bool) — show the on-chain payment reminder (default false)
+//     brand.payment_reminder_title (string) — optional plain-text title
+//     brand.payment_reminder_body (string) — optional plain-text body supporting {amount}
 //     brand.background_color (string) — checkout background color
 //     brand.background_image_url (string) — checkout background image URL
 //     brand.site_name        (string) — legacy cashier/site display name
@@ -63,7 +79,7 @@ import (
 //     system.amount_precision      (int) — payment amount precision, 2-6 decimals (default 2)
 //     system.log_level             (string) — runtime log level: debug, info, warn, error (default error)
 type SettingUpsertItem struct {
-	Group string      `json:"group" enums:"brand,rate,system,epay,okpay" example:"epay"`
+	Group string      `json:"group" enums:"brand,rate,system,epay,okpay,xlayer" example:"epay"`
 	Key   string      `json:"key" example:"epay.default_network"`
 	Value interface{} `json:"value"`
 	Type  string      `json:"type" enums:"string,int,bool,json" example:"string"`
@@ -77,12 +93,12 @@ type SettingsUpsertRequest struct {
 // ListSettings returns all rows, optionally filtered by group.
 // @Summary      List settings
 // @Description  Returns all settings, optionally filtered by group.
-// @Description  Available groups: brand, rate, system, epay, okpay.
+// @Description  Available groups: brand, rate, system, epay, okpay, xlayer.
 // @Description  See SettingUpsertItem for the full list of supported keys per group.
 // @Tags         Admin Settings
 // @Security     AdminJWT
 // @Produce      json
-// @Param        group query string false "Group filter (brand|rate|system|epay|okpay)"
+// @Param        group query string false "Group filter (brand|rate|system|epay|okpay|xlayer)"
 // @Success      200 {object} response.ApiResponse{data=[]mdb.Setting}
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/settings [get]
@@ -120,11 +136,12 @@ func redactSettingsURL(raw string) string {
 // ones. Errors are returned per-key so the UI can surface them.
 // @Summary      Upsert settings
 // @Description  Batch insert/update settings. Returns per-key status; failed items include error_code for frontend i18n.
-// @Description  Supported groups: brand, rate, system, epay, okpay.
+// @Description  Supported groups: brand, rate, system, epay, okpay, xlayer.
 // @Description  epay group keys: epay.default_token (e.g. "usdt" or "ton", ignored when a supported type=token.network selector is supplied, empty allows status=4 placeholders), epay.default_currency (e.g. "cny", still applies when a supported type selector is supplied, empty falls back to cny), epay.default_network (e.g. "tron" or "ton", ignored when a supported type=token.network selector is supplied, empty allows status=4 placeholders).
 // @Description  okpay group keys: okpay.enabled, okpay.shop_id, okpay.shop_token, okpay.api_url, okpay.callback_url, okpay.return_url, okpay.timeout_seconds, okpay.allow_tokens.
+// @Description  xlayer group keys: xlayer.enabled, xlayer.api_key, xlayer.api_secret, xlayer.passphrase, xlayer.to_address, xlayer.return_url, xlayer.timeout_seconds, xlayer.allow_tokens. The Onchain OS Payment base URL is fixed to https://web3.okx.com in code; any leftover xlayer.api_url row is ignored.
 // @Description  rate group keys: rate.mode (fixed|auto, default fixed), rate.cache_ttl_seconds (10-86400, default 300), rate.forced_rate_list (JSON map, e.g. {"cny":{"usdt":0.14635,"ton":0.5}}; base/coin keys are normalized to lowercase; empty is restored to the built-in CNY USDT/USDC default), rate.api_url (optional; non-empty value must be a public http/https URL), rate.adjust_percent, rate.okx_c2c_enabled.
-// @Description  brand group keys: brand.checkout_name, brand.logo_url, brand.site_title, brand.success_copy, brand.support_url, brand.background_color, brand.background_image_url. Legacy aliases brand.site_name, brand.page_title and brand.pay_success_text are also supported.
+// @Description  brand group keys: brand.checkout_name, brand.logo_url, brand.site_title, brand.success_copy, brand.support_url, brand.cashier_script, brand.background_color, brand.background_image_url, brand.withdrawal_reminder_enabled, brand.payment_reminder_title, brand.payment_reminder_body. Legacy aliases brand.site_name, brand.page_title and brand.pay_success_text are also supported.
 // @Description  system group keys: system.order_expiration_time, system.amount_precision (int, 2-6, default 2), system.log_level (debug|info|warn|error, default error).
 // @Tags         Admin Settings
 // @Security     AdminJWT
@@ -153,11 +170,21 @@ func (c *BaseAdminController) UpsertSettings(ctx echo.Context) error {
 		code, msg := constant.ResolveErrno(err)
 		return result{Key: key, OK: false, ErrorCode: code, Error: msg}
 	}
+	var telegramChanges telegramSettingChanges
 	for _, item := range req.Items {
 		key := strings.TrimSpace(item.Key)
 		if key == "" {
 			out = append(out, errorResult(item.Key, constant.SettingItemErr))
 			continue
+		}
+		if key == mdb.SettingKeyBrandReminderTitle || key == mdb.SettingKeyBrandReminderBody || key == mdb.SettingKeyBrandCashierScript {
+			text, ok := item.Value.(string)
+			if !ok || !strings.EqualFold(strings.TrimSpace(item.Group), mdb.SettingGroupBrand) {
+				out = append(out, errorResult(key, constant.SettingItemErr))
+				continue
+			}
+			item.Group, item.Type = mdb.SettingGroupBrand, mdb.SettingTypeString
+			item.Value = strings.TrimSpace(text)
 		}
 		value, err := normalizeSettingValue(item.Value)
 		if err != nil {
@@ -168,6 +195,14 @@ func (c *BaseAdminController) UpsertSettings(ctx echo.Context) error {
 		if err != nil {
 			out = append(out, errorResult(key, constant.SettingItemErr))
 			continue
+		}
+		if key == mdb.SettingKeyStrictPayment || key == mdb.SettingKeyDetailedDiagnostics {
+			item.Group = mdb.SettingGroupSystem
+			item.Type = mdb.SettingTypeBool
+		}
+		if key == mdb.SettingKeyBrandWithdrawalReminder {
+			item.Group = mdb.SettingGroupBrand
+			item.Type = mdb.SettingTypeBool
 		}
 		if key == mdb.SettingKeyAmountPrecision {
 			item.Group = mdb.SettingGroupSystem
@@ -189,6 +224,8 @@ func (c *BaseAdminController) UpsertSettings(ctx echo.Context) error {
 			item.Group = mdb.SettingGroupSystem
 			item.Type = mdb.SettingTypeString
 		}
+		telegramChanged := strings.HasPrefix(key, "system.telegram_") &&
+			strings.TrimSpace(data.GetSettingString(key, "")) != strings.TrimSpace(value)
 		if err := data.SetSetting(item.Group, key, value, item.Type); err != nil {
 			out = append(out, errorResult(key, err))
 			continue
@@ -199,33 +236,43 @@ func (c *BaseAdminController) UpsertSettings(ctx echo.Context) error {
 				continue
 			}
 		}
+		if telegramChanged {
+			telegramChanges.record(key)
+		}
 		out = append(out, result{Key: key, OK: true})
 	}
 	if err := data.EnsureDefaultForcedRateList(); err != nil {
 		out = append(out, errorResult(mdb.SettingKeyRateForcedRateList, err))
 	}
 
-	// When telegram credentials are updated via settings, reload the
-	// command bot so operators don't need to restart the process, and
-	// sync the notification_channels row so the notify dispatcher picks
-	// up the new values immediately.
-	telegramKeys := map[string]bool{
-		"system.telegram_bot_token":               true,
-		"system.telegram_chat_id":                 true,
-		"system.telegram_payment_notice_enabled":  true,
-		"system.telegram_abnormal_notice_enabled": true,
-	}
-	for index, item := range req.Items {
-		// A partial HTTP 200 may contain rejected Telegram rows. Reload
-		// integrations only for a successfully persisted Telegram key.
-		if index < len(out) && out[index].OK && telegramKeys[strings.TrimSpace(item.Key)] {
-			telegram.ReloadBotAsync("settings upsert")
-			go dao.SyncTelegramChannelFromSettings()
-			break
-		}
-	}
+	telegramChanges.apply()
 
 	return c.SucJson(ctx, out)
+}
+
+// Push notification preferences and the command bot share only the system credentials.
+type telegramSettingChanges struct {
+	credentials   bool
+	notifications bool
+}
+
+func (changes *telegramSettingChanges) record(key string) {
+	switch key {
+	case "system.telegram_bot_token", "system.telegram_chat_id":
+		changes.credentials = true
+		changes.notifications = true
+	case "system.telegram_payment_notice_enabled", "system.telegram_abnormal_notice_enabled":
+		changes.notifications = true
+	}
+}
+
+func (changes telegramSettingChanges) apply() {
+	if changes.notifications {
+		dao.SyncTelegramChannelFromSettings()
+	}
+	if changes.credentials {
+		telegram.ReloadBotAsync("command bot settings changed")
+	}
 }
 
 func normalizeSettingValue(value interface{}) (string, error) {
@@ -245,6 +292,47 @@ func normalizeSettingValue(value interface{}) (string, error) {
 
 func normalizeAndValidateSettingItem(group, key, value string) (string, error) {
 	switch key {
+	case mdb.SettingKeyXLayerToAddress:
+		value = strings.TrimSpace(value)
+		if group != mdb.SettingGroupXLayer || (value != "" && (!ethcommon.IsHexAddress(value) || !strings.HasPrefix(value, "0x") || ethcommon.HexToAddress(value) == (ethcommon.Address{}))) {
+			return value, fmt.Errorf("invalid X Layer receiving address")
+		}
+		return value, nil
+	case mdb.SettingKeyXLayerAllowTokens:
+		if group != mdb.SettingGroupXLayer {
+			return value, fmt.Errorf("invalid X Layer settings group")
+		}
+		var tokens []string
+		for _, item := range strings.Split(value, ",") {
+			symbol := strings.ToUpper(strings.TrimSpace(item))
+			switch symbol {
+			case "":
+				continue
+			case "USDC", "USDT0", "USDG":
+				if !slices.Contains(tokens, symbol) {
+					tokens = append(tokens, symbol)
+				}
+			default:
+				return value, fmt.Errorf("unsupported X Layer token")
+			}
+		}
+		return strings.Join(tokens, ","), nil
+	case mdb.SettingKeyStrictPayment, mdb.SettingKeyDetailedDiagnostics:
+		if group != mdb.SettingGroupSystem || (value != "true" && value != "false") {
+			return value, fmt.Errorf("%s requires a system boolean", key)
+		}
+	case mdb.SettingKeyBrandWithdrawalReminder:
+		if !strings.EqualFold(strings.TrimSpace(group), mdb.SettingGroupBrand) {
+			return value, fmt.Errorf("%s must use group %s", key, mdb.SettingGroupBrand)
+		}
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "true":
+			return "true", nil
+		case "false":
+			return "false", nil
+		default:
+			return value, fmt.Errorf("%s must be true or false", key)
+		}
 	case mdb.SettingKeyAmountPrecision:
 		if strings.ToLower(strings.TrimSpace(group)) != mdb.SettingGroupSystem {
 			return value, fmt.Errorf("%s must use group %s", key, mdb.SettingGroupSystem)
@@ -472,9 +560,14 @@ func (c *BaseAdminController) DeleteSetting(ctx echo.Context) error {
 	if key == "" {
 		return c.SucJson(ctx, nil)
 	}
+	var telegramChanges telegramSettingChanges
+	if strings.HasPrefix(key, "system.telegram_") && data.GetSettingString(key, "") != "" {
+		telegramChanges.record(key)
+	}
 	if err := data.DeleteSetting(key); err != nil {
 		return c.FailJson(ctx, err)
 	}
+	telegramChanges.apply()
 	if key == mdb.SettingKeyRateForcedRateList {
 		if err := data.EnsureDefaultForcedRateList(); err != nil {
 			return c.FailJson(ctx, err)

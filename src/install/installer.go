@@ -38,6 +38,7 @@ import (
 	"github.com/gookit/color"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -103,25 +104,14 @@ func installRootRedirectMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-func resolveInstallWWWRoot() string {
-	// Resolve www/ relative to the executable so SPA routes work regardless
-	// of the working directory. main.go extracts www/ next to the binary.
-	wwwRoot := "./www"
-	if exePath, err := os.Executable(); err == nil {
-		if exePath, err = filepath.EvalSymlinks(exePath); err == nil {
-			wwwRoot = filepath.Join(filepath.Dir(exePath), "www")
-		}
-	}
-	return wwwRoot
-}
-
-func newInstallServer(envFilePath, wwwRoot string) (*echo.Echo, *installHandler) {
+func newInstallServer(envFilePath string, frontend http.FileSystem) (*echo.Echo, *installHandler) {
 	h := &installHandler{
 		envFilePath: envFilePath,
 		done:        make(chan struct{}),
 	}
 
 	e := echo.New()
+	e.Pre(luluHttp.PublicCashierBoundary(config.CashierScriptOrigin(), true))
 	e.HideBanner = true
 	e.HidePort = true
 
@@ -140,9 +130,9 @@ func newInstallServer(envFilePath, wwwRoot string) (*echo.Echo, *installHandler)
 		Skipper: func(c echo.Context) bool {
 			return luluHttp.ShouldSkipSPAFallback(c.Request().URL.Path)
 		},
-		HTML5: true,
-		Index: "index.html",
-		Root:  wwwRoot,
+		HTML5:      true,
+		Index:      "index.html",
+		Filesystem: frontend,
 	}))
 
 	return e, h
@@ -238,12 +228,12 @@ func (h *installHandler) Submit(c echo.Context) error {
 // RunInstallServer starts the install UI and REST API on listenAddr
 // (default :8000), then blocks until installation has been finalized.
 // The caller should then proceed with normal app initialisation (bootstrap.InitApp).
-func RunInstallServer(listenAddr, envFilePath string) {
+func RunInstallServer(listenAddr, envFilePath string, frontend http.FileSystem) error {
 	if listenAddr == "" {
 		listenAddr = DefaultInstallAddr
 	}
 
-	e, h := newInstallServer(envFilePath, resolveInstallWWWRoot())
+	e, h := newInstallServer(envFilePath, frontend)
 
 	// Build a human-readable URL for the console hint.
 	installHost := listenAddr
@@ -260,11 +250,11 @@ func RunInstallServer(listenAddr, envFilePath string) {
 	}()
 
 	if err := e.Start(listenAddr); err != nil && err != http.ErrServerClosed {
-		color.Red.Printf("[install] server error: %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("start install server: %w", err)
 	}
 
 	color.Green.Printf("[install] configuration saved to %s, starting…\n", envFilePath)
+	return nil
 }
 
 // formControlledKeys are keys whose values always come from the install form
@@ -295,14 +285,28 @@ type envTemplateData struct {
 func writeEnvFile(path string, r *InstallRequest, installEnabled bool) error {
 	// Collect existing non-empty key→value pairs for non-form keys.
 	existingValues := map[string]string{}
-	if data, err := os.ReadFile(path); err == nil {
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		previous := viper.New()
+		previous.SetConfigType("env")
+		if err := previous.ReadConfig(bytes.NewReader(data)); err != nil {
+			return fmt.Errorf("read existing configuration: %w", err)
+		}
+		dbType, err := config.PrimaryDatabaseType(previous)
+		if err != nil {
+			return err
+		}
+		existingValues["db_type"] = dbType
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
 			if idx := strings.IndexByte(line, '='); idx >= 0 {
-				k := strings.TrimSpace(line[:idx])
+				k := strings.ToLower(strings.TrimSpace(line[:idx]))
 				v := strings.TrimSpace(line[idx+1:])
 				if v != "" && !formControlledKeys[k] {
 					existingValues[k] = v
@@ -451,8 +455,19 @@ log_max_size=32
 log_max_age=7
 max_backups=3
 
-# supported values: postgres,mysql,sqlite
+# SQLite is the default. Existing deployments can use mysql.
 db_type=sqlite
+
+# MySQL primary database configuration
+mysql_host=
+mysql_port=
+mysql_database=
+mysql_user=
+mysql_passwd=
+mysql_table_prefix=
+mysql_max_idle_conns=
+mysql_max_open_conns=
+mysql_max_life_time=
 
 # sqlite primary database config
 sqlite_database_filename=
@@ -471,6 +486,18 @@ order_notice_max_retry={{.OrderNoticeMaxRetry}}
 
 api_rate_url=
 
+# GitHub repository used by the authenticated admin version checker.
+# Keep this server-side value in owner/name form; browsers cannot override it.
+update_repository=GMWalletApp/epusdt
+
 # Set to true to re-run the install wizard on next startup.
 install={{.InstallValue}}
+
+# ChainScanner service origin and credentials. Use one consumer identity for EPUSDT.
+chainscanner_url=
+chainscanner_token=
+# Separate scanner administrator credential for node and blacklist operations.
+chainscanner_admin_token=
+# ws (default), grpc or http (long polling).
+chainscanner_transport=ws
 `))

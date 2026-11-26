@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,17 +17,18 @@ var (
 	HTTPAccessLog      bool
 	SQLDebug           bool
 	LogLevel           string
-	MysqlDns           string
 	RuntimePath        string
 	LogSavePath        string
 	StaticPath         string
 	StaticFilePath     string
+	UpdateRepository   string
 	TgBotToken         string
 	TgProxy            string
 	TgManage           int64
 	BuildVersion       = "0.0.0-dev"
 	BuildCommit        = "none"
 	BuildDate          = "unknown"
+	BuildType          = "source"
 	configRootPath     string
 	explicitConfigPath string
 )
@@ -54,6 +54,7 @@ func Init() {
 	LogLevel = normalizeLogLevel(viper.GetString("log_level"))
 	StaticPath = normalizeStaticURLPath(viper.GetString("static_path"))
 	StaticFilePath = filepath.Join(configRootPath, strings.TrimPrefix(StaticPath, "/"))
+	UpdateRepository = normalizeUpdateRepository(viper.GetString("update_repository"))
 	if err = ensureConfiguredStaticFiles(); err != nil {
 		panic(err)
 	}
@@ -61,11 +62,6 @@ func Init() {
 	LogSavePath = resolvePathFromBase(RuntimePath, viper.GetString("log_save_path"), filepath.Join(RuntimePath, "logs"))
 	mustMkdir(RuntimePath)
 	mustMkdir(LogSavePath)
-	MysqlDns = fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		url.QueryEscape(viper.GetString("mysql_user")),
-		url.QueryEscape(viper.GetString("mysql_passwd")),
-		fmt.Sprintf("%s:%s", viper.GetString("mysql_host"), viper.GetString("mysql_port")),
-		viper.GetString("mysql_database"))
 	TgBotToken = viper.GetString("tg_bot_token")
 	TgProxy = viper.GetString("tg_proxy")
 	TgManage = viper.GetInt64("tg_manage")
@@ -182,6 +178,31 @@ func normalizeStaticURLPath(path string) string {
 		path = "/" + path
 	}
 	return path
+}
+
+// normalizeUpdateRepository keeps the release source server-side and limits
+// it to the owner/name form accepted by the GitHub API. The browser never
+// supplies this value, which prevents turning the check endpoint into a URL
+// proxy.
+func normalizeUpdateRepository(repository string) string {
+	repository = strings.TrimSpace(repository)
+	if repository == "" {
+		return "GMWalletApp/epusdt"
+	}
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repository, "\\?#:") {
+		return "GMWalletApp/epusdt"
+	}
+	return repository
+}
+
+// GetUpdateRepository returns the configured GitHub owner/name. Init must have
+// run before serving requests; the fallback keeps tests and CLI commands safe.
+func GetUpdateRepository() string {
+	if UpdateRepository != "" {
+		return UpdateRepository
+	}
+	return normalizeUpdateRepository(viper.GetString("update_repository"))
 }
 
 func resolvePathFromBase(basePath string, path string, fallback string) string {
@@ -346,6 +367,26 @@ func GetOrderExpirationTime() int {
 func GetOrderExpirationTimeDuration() time.Duration {
 	timer := GetOrderExpirationTime()
 	return time.Minute * time.Duration(timer)
+}
+
+// PrimaryDatabaseType resolves the primary store before startup or config writes.
+func PrimaryDatabaseType(settings *viper.Viper) (string, error) {
+	dbType := strings.ToLower(strings.TrimSpace(settings.GetString("db_type")))
+	switch dbType {
+	case "sqlite", "mysql":
+		return dbType, nil
+	case "":
+		if settings.GetString("postgres_database") != "" || settings.GetString("postgres_host") != "" {
+			return "", fmt.Errorf("legacy PostgreSQL configuration detected: set db_type explicitly to a supported backend (sqlite or mysql)")
+		}
+		// Older fork releases used MySQL when db_type was omitted.
+		if settings.GetString("mysql_database") != "" || settings.GetString("mysql_host") != "" {
+			return "mysql", nil
+		}
+		return "sqlite", nil
+	default:
+		return "", fmt.Errorf("unsupported db_type %q: supported backends are sqlite and mysql", dbType)
+	}
 }
 
 func GetRuntimeSqlitePath() string {

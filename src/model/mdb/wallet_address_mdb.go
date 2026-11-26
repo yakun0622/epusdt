@@ -6,14 +6,23 @@ const (
 )
 
 const (
-	NetworkTron     = "tron"
-	NetworkSolana   = "solana"
-	NetworkEthereum = "ethereum"
-	NetworkBsc      = "binance"
-	NetworkPolygon  = "polygon"
-	NetworkPlasma   = "plasma"
-	NetworkTon      = "ton"
-	NetworkAptos    = "aptos"
+	NetworkTron      = "tron"
+	NetworkSolana    = "solana"
+	NetworkEthereum  = "ethereum"
+	NetworkBsc       = "binance"
+	NetworkPolygon   = "polygon"
+	NetworkPlasma    = "plasma"
+	NetworkTon       = "ton"
+	NetworkAptos     = "aptos"
+	NetworkSui       = "sui"
+	NetworkArbitrum  = "arbitrum"
+	NetworkHyperEVM  = "hyperevm"
+	NetworkMonad     = "monad"
+	NetworkArc       = "arc"
+	NetworkAvalanche = "avalanche"
+	NetworkOptimism  = "optimism"
+	NetworkBase      = "base"
+	NetworkXLayer    = "xlayer"
 )
 
 const (
@@ -22,8 +31,8 @@ const (
 )
 
 type WalletAddress struct {
-	Network string `gorm:"column:network;uniqueIndex:wallet_address_network_address_uindex" json:"network" example:"tron"`
-	Address string `gorm:"column:address;uniqueIndex:wallet_address_network_address_uindex" json:"address" example:"TTestTronAddress001"`
+	Network string `gorm:"column:network;uniqueIndex:wallet_address_network_address_uindex,length:32" json:"network" example:"tron"`
+	Address string `gorm:"column:address;uniqueIndex:wallet_address_network_address_uindex,length:191" json:"address" example:"TA4Wt1DUCqz6YegbnsmqsWC5uUfbdBqPxm"`
 	// 状态 1=启用 2=禁用
 	Status int64  `gorm:"column:status;default:1" json:"status" enums:"1,2" example:"1"`
 	Remark string `gorm:"column:remark;size:255" json:"remark" example:"主钱包"`

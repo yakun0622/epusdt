@@ -1,9 +1,16 @@
 package response
 
+// TokenDetails identifies the on-chain asset. Native assets without an identifier use an empty address.
+type TokenDetails struct {
+	ContractAddress string `json:"contract_address"`
+	Decimals        int    `json:"decimals"`
+}
+
 type NetworkTokenSupport struct {
-	Network     string   `json:"network" example:"tron"`
-	DisplayName string   `json:"display_name" example:"TRON"`
-	Tokens      []string `json:"tokens" example:"USDT,USDC"`
+	Network      string                  `json:"network" example:"tron"`
+	DisplayName  string                  `json:"display_name" example:"TRON"`
+	Tokens       []string                `json:"tokens" example:"USDT,USDC"`
+	TokenDetails map[string]TokenDetails `json:"token_details"`
 }
 
 type EpayPublicConfig struct {
@@ -13,12 +20,17 @@ type EpayPublicConfig struct {
 }
 
 type SitePublicConfig struct {
-	CashierName        string `json:"cashier_name" example:"Acme Cashier"`
-	LogoURL            string `json:"logo_url" example:"https://cdn.example.com/logo.png"`
-	WebsiteTitle       string `json:"website_title" example:"Acme Payments"`
-	SupportLink        string `json:"support_link" example:"https://example.com/support"`
-	BackgroundColor    string `json:"background_color" example:"#0f172a"`
-	BackgroundImageURL string `json:"background_image_url" example:"https://cdn.example.com/background.png"`
+	CashierScript             string `json:"cashier_script,omitempty"`        // Public support widget installation snippet. Empty disables the widget.
+	CashierScriptOrigin       string `json:"cashier_script_origin,omitempty"` // Deployment-authorized HTTPS origin for native widgets. Other origins isolate the snippet.
+	WithdrawalReminderEnabled bool   `json:"withdrawal_reminder_enabled" example:"false"`
+	PaymentReminderTitle      string `json:"payment_reminder_title"` // Optional on-chain payment reminder title. Empty uses the checkout language.
+	PaymentReminderBody       string `json:"payment_reminder_body"`  // Optional plain text. {amount} inserts the formatted payment amount and token.
+	CashierName               string `json:"cashier_name" example:"Acme Cashier"`
+	LogoURL                   string `json:"logo_url" example:"https://cdn.example.com/logo.png"`
+	WebsiteTitle              string `json:"website_title" example:"Acme Payments"`
+	SupportLink               string `json:"support_link" example:"https://example.com/support"`
+	BackgroundColor           string `json:"background_color" example:"#0f172a"`
+	BackgroundImageURL        string `json:"background_image_url" example:"https://cdn.example.com/background.png"`
 }
 
 type OkPayPublicConfig struct {
@@ -32,10 +44,28 @@ type OkPayPublicConfig struct {
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty" example:"10"`
 }
 
+// XLayerPublicConfig mirrors OkPayPublicConfig for the OKX Onchain OS
+// Payment hosted checkout on X Layer. Public callers only get enabled +
+// allow_tokens; credentials are filled for the admin variant only.
+// There is deliberately no api_url field: the Onchain OS Payment base
+// URL is the fixed xlayerAPIBaseURL constant in model/service, not a
+// setting (2026-11-21 4th review).
+type XLayerPublicConfig struct {
+	Enabled        bool     `json:"enabled" example:"true"`
+	AllowTokens    []string `json:"allow_tokens" example:"USDC,USDT0,USDG"`
+	APIKey         string   `json:"api_key,omitempty" example:"okx-api-key"`
+	APISecret      string   `json:"api_secret,omitempty" example:"okx-api-secret"`
+	Passphrase     string   `json:"passphrase,omitempty" example:"okx-passphrase"`
+	ReturnURL      string   `json:"return_url,omitempty" example:"https://pay.example.com/success"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty" example:"10"`
+	ToAddress      string   `json:"to_address,omitempty" example:"0x0000000000000000000000000000000000000000"`
+}
+
 type PublicConfigResponse struct {
 	SupportedAssets []NetworkTokenSupport `json:"supported_assets"`
 	Site            SitePublicConfig      `json:"site"`
 	Epay            EpayPublicConfig      `json:"epay"`
 	OkPay           OkPayPublicConfig     `json:"okpay"`
+	XLayer          XLayerPublicConfig    `json:"xlayer"`
 	Version         string                `json:"version" example:"v1.0.1"`
 }

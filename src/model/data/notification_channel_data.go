@@ -20,8 +20,7 @@ func ListNotificationChannels(channelType string) ([]mdb.NotificationChannel, er
 }
 
 // ListEnabledChannelsByEvent returns enabled rows whose Events JSON has
-// the named event key set to true. Done in Go (rather than JSON_EXTRACT)
-// because the runtime DB is DB-agnostic (MySQL/Postgres/SQLite).
+// the named event key set to true.
 func ListEnabledChannelsByEvent(event string) ([]mdb.NotificationChannel, error) {
 	var rows []mdb.NotificationChannel
 	if err := dao.Mdb.Model(&mdb.NotificationChannel{}).
@@ -40,26 +39,6 @@ func ListEnabledChannelsByEvent(event string) ([]mdb.NotificationChannel, error)
 		}
 	}
 	return out, nil
-}
-
-// GetFirstEnabledTelegramChannel returns the oldest enabled telegram
-// row, or nil ID if none. Telegram bot startup uses this as the primary
-// instance backing /start and command handlers.
-func GetFirstEnabledTelegramChannel() (*mdb.NotificationChannel, error) {
-	row := new(mdb.NotificationChannel)
-	err := dao.Mdb.Model(row).
-		Where("type = ?", mdb.NotificationTypeTelegram).
-		Where("enabled = ?", true).
-		Order("id ASC").
-		Limit(1).Find(row).Error
-	return row, err
-}
-
-// GetNotificationChannelByID fetches by PK.
-func GetNotificationChannelByID(id uint64) (*mdb.NotificationChannel, error) {
-	row := new(mdb.NotificationChannel)
-	err := dao.Mdb.Model(row).Limit(1).Find(row, id).Error
-	return row, err
 }
 
 // CreateNotificationChannel inserts a new row.

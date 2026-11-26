@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/GMWalletApp/epusdt/internal/testutil"
+	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/xssnick/tonutils-go/address"
 )
@@ -30,7 +31,7 @@ func TestEvmTransactionLockAddressIsCaseInsensitive(t *testing.T) {
 		t.Fatalf("trade id = %q, want %q", gotTradeID, tradeID)
 	}
 
-	if err := UnLockTransaction(mdb.NetworkEthereum, strings.ToUpper(address), "USDT", 1.23); err != nil {
+	if err := UnLockTransactionByTradeId(tradeID); err != nil {
 		t.Fatalf("unlock transaction: %v", err)
 	}
 
@@ -43,45 +44,89 @@ func TestEvmTransactionLockAddressIsCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestStatsBucketExprForDialect(t *testing.T) {
-	tests := []struct {
-		name    string
-		dialect string
-		hourly  bool
-		want    string
-	}{
-		{
-			name:    "sqlite daily",
-			dialect: "sqlite",
-			want:    "substr(created_at, 1, 10)",
-		},
-		{
-			name:    "sqlite hourly",
-			dialect: "sqlite",
-			hourly:  true,
-			want:    "replace(substr(created_at, 1, 13), 'T', ' ') || ':00'",
-		},
-		{
-			name:    "postgres daily",
-			dialect: "postgres",
-			want:    "TO_CHAR(created_at, 'YYYY-MM-DD')",
-		},
-		{
-			name:    "postgres hourly",
-			dialect: "postgres",
-			hourly:  true,
-			want:    "TO_CHAR(created_at, 'YYYY-MM-DD HH24:00')",
-		},
+func TestCreateOrderWithTransactionStoresUTCCreatedAt(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	order := &mdb.Orders{
+		TradeId:        "created-at-utc",
+		OrderId:        "created-at-utc",
+		Amount:         1,
+		Currency:       "CNY",
+		ActualAmount:   1,
+		ReceiveAddress: "TTestCreatedAtAddress",
+		Token:          "USDT",
+		Network:        mdb.NetworkTron,
+		Status:         mdb.StatusWaitPay,
 	}
+	if err := CreateOrderWithTransaction(dao.Mdb, order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if _, offset := order.CreatedAt.StdTime().Zone(); offset != 0 {
+		t.Fatalf("model created_at offset = %d, want 0", offset)
+	}
+	var stored time.Time
+	if err := dao.Mdb.Raw("SELECT created_at FROM orders WHERE trade_id = ?", order.TradeId).Scan(&stored).Error; err != nil {
+		t.Fatalf("read stored created_at: %v", err)
+	}
+	if _, offset := stored.Zone(); offset != 0 {
+		t.Fatalf("stored created_at offset = %d, want 0", offset)
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := statsBucketExprForDialect(tt.dialect, "created_at", tt.hourly)
+func TestStatsBucketGroupsSQLiteTimestamps(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	// Stored order timestamps are UTC. Buckets are their local-time labels.
+	utc := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC)
+	wantDaily := utc.In(time.Local).Format("2006-01-02")
+	wantHourly := utc.In(time.Local).Format("2006-01-02 15:00")
+	for _, timestamp := range []string{
+		utc.Format("2006-01-02 15:04:05"),
+		utc.Format(time.RFC3339),
+		"2026-01-02 23:04:05.000000000 +0800 CST",
+		"2026-01-02 10:04:05.000000000 -0500 EST",
+		"2026-01-02 23:04:05 +08:00",
+		"2026-01-02 10:04:05 -05:00",
+	} {
+		for _, tc := range []struct {
+			hourly bool
+			want   string
+		}{{false, wantDaily}, {true, wantHourly}} {
+			var got string
+			bucket, err := statsBucketExpr("created_at", tc.hourly)
 			if err != nil {
-				t.Fatalf("statsBucketExprForDialect error: %v", err)
+				t.Fatal(err)
 			}
-			if got != tt.want {
-				t.Fatalf("bucket expr = %q, want %q", got, tt.want)
+			err = dao.Mdb.Raw("SELECT "+bucket+" FROM (SELECT ? AS created_at)", timestamp).Scan(&got).Error
+			if err != nil || got != tc.want {
+				t.Fatalf("timestamp %q hourly=%v: got %q, want %q (error %v)", timestamp, tc.hourly, got, tc.want, err)
+			}
+		}
+	}
+}
+
+func TestSQLiteTimestampUTCExprPreservesHistoricalOffsets(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	cases := []struct {
+		name      string
+		createdAt string
+		want      bool
+	}{
+		{name: "west-fresh", createdAt: "2026-01-02 11:00:00.000000000 -0500 EST", want: false},
+		{name: "east-old", createdAt: "2026-01-02 22:00:00.000000000 +0800 CST", want: true},
+		{name: "west-spaced-colon-fresh", createdAt: "2026-01-02 11:00:00 -05:00", want: false},
+		{name: "east-spaced-colon-old", createdAt: "2026-01-02 22:00:00 +08:00", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			order := &mdb.Orders{TradeId: tc.name, OrderId: tc.name, Status: mdb.StatusWaitPay}
+			if err := dao.Mdb.Create(order).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := dao.Mdb.Model(order).Update("created_at", tc.createdAt).Error; err != nil {
+				t.Fatal(err)
+			}
+			got, err := UpdateOrderIsExpirationById(order.ID, time.Date(2026, 1, 2, 15, 0, 0, 0, time.UTC))
+			if err != nil || got != tc.want {
+				t.Fatalf("created_at=%q expiration=%t want=%t err=%v", tc.createdAt, got, tc.want, err)
 			}
 		})
 	}
@@ -90,7 +135,7 @@ func TestStatsBucketExprForDialect(t *testing.T) {
 func TestStatsBucketExprSupportsMySQL57AndRejectsUnknownDialect(t *testing.T) {
 	for _, tc := range []struct {
 		hourly bool
-		want string
+		want   string
 	}{
 		{false, "DATE_FORMAT(created_at, '%Y-%m-%d')"},
 		{true, "DATE_FORMAT(created_at, '%Y-%m-%d %H:00')"},
@@ -102,6 +147,115 @@ func TestStatsBucketExprSupportsMySQL57AndRejectsUnknownDialect(t *testing.T) {
 	}
 	if _, err := statsBucketExprForDialect("unsupported", "created_at", false); err == nil {
 		t.Fatal("expected unknown database dialect error")
+	}
+}
+
+func TestGetSubOrderByTokenNetworkAndProviderSeparatesProviders(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	legacyOnChain := &mdb.Orders{
+		TradeId:       "sub-legacy-onchain",
+		OrderId:       "sub-legacy-onchain",
+		ParentTradeId: "parent-provider-sep",
+		Token:         "USDT",
+		Network:       mdb.NetworkTron,
+		Status:        mdb.StatusWaitPay,
+		PayProvider:   "",
+	}
+	if err := dao.Mdb.Create(legacyOnChain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := dao.Mdb.Model(legacyOnChain).UpdateColumn("pay_provider", "").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gotHosted, err := GetSubOrderByTokenNetworkAndProvider("parent-provider-sep", "USDT", mdb.NetworkTron, mdb.PaymentProviderOkPay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotHosted.ID != 0 {
+		t.Fatalf("hosted lookup unexpectedly matched legacy on-chain sub-order %q", gotHosted.TradeId)
+	}
+
+	gotOnChain, err := GetSubOrderByTokenNetworkAndProvider("parent-provider-sep", "USDT", mdb.NetworkTron, mdb.PaymentProviderOnChain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOnChain.TradeId != legacyOnChain.TradeId {
+		t.Fatalf("on-chain lookup trade_id = %q, want %q", gotOnChain.TradeId, legacyOnChain.TradeId)
+	}
+}
+
+func TestGetPendingCallbackOrdersDueHandlesNegativeMaxRetry(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	orders, err := GetPendingCallbackOrdersDue(-1, 10, time.Now().UTC(), 5*time.Second, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(orders) != 0 {
+		t.Fatalf("got %d orders, want 0", len(orders))
+	}
+}
+
+func TestDashboardTrendBucketsUseLocalDay(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	created := time.Date(2026, 11, 22, 17, 9, 21, 0, time.UTC)
+	localCreated := created.In(time.Local)
+	start := time.Date(localCreated.Year(), localCreated.Month(), localCreated.Day(), 0, 0, 0, 0, time.Local)
+	end := start.AddDate(0, 0, 1)
+	order := &mdb.Orders{
+		TradeId:        "trend-local-day",
+		OrderId:        "trend-local-day",
+		Amount:         10,
+		Currency:       "CNY",
+		ActualAmount:   1.23,
+		ReceiveAddress: "TTestTrendAddress001",
+		Token:          "USDT",
+		Network:        mdb.NetworkTron,
+		Status:         mdb.StatusPaySuccess,
+	}
+	if err := dao.Mdb.Create(order).Error; err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := dao.Mdb.Model(order).Updates(map[string]any{"created_at": created, "updated_at": created.Add(time.Minute)}).Error; err != nil {
+		t.Fatalf("set order times: %v", err)
+	}
+
+	daily, err := DailyOrderStats(start, end)
+	if err != nil {
+		t.Fatalf("daily stats: %v", err)
+	}
+	wantDay := localCreated.Format("2006-01-02")
+	found := false
+	for _, row := range daily {
+		if row.Day != wantDay {
+			continue
+		}
+		found = true
+		if row.OrderCount != 1 || row.SuccessCount != 1 || row.ActualAmount != 1.23 {
+			t.Fatalf("daily row %+v, want count=1 success=1 actual=1.23", row)
+		}
+	}
+	if !found {
+		t.Fatalf("daily stats missing local bucket %s: %+v", wantDay, daily)
+	}
+
+	hourly, err := HourlyOrderStats(start, end)
+	if err != nil {
+		t.Fatalf("hourly stats: %v", err)
+	}
+	wantHour := localCreated.Format("2006-01-02 15:00")
+	found = false
+	for _, row := range hourly {
+		if row.Day != wantHour {
+			continue
+		}
+		found = true
+		if row.OrderCount != 1 || row.SuccessCount != 1 {
+			t.Fatalf("hourly row %+v, want count=1 success=1", row)
+		}
+	}
+	if !found {
+		t.Fatalf("hourly stats missing local bucket %s: %+v", wantHour, hourly)
 	}
 }
 

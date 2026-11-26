@@ -26,7 +26,7 @@ type RpcNode struct {
 	Network string `gorm:"column:network;size:32;index:rpc_nodes_network_status_index,priority:1" json:"network" example:"tron"`
 	Url     string `gorm:"column:url;size:512" json:"url" example:"https://api.trongrid.io"`
 	// 连接类型 http=HTTP请求 ws=WebSocket长连接 lite=TON liteserver配置
-	Type    string `gorm:"column:type;size:16" json:"type" enums:"http,ws,lite" example:"http"`
+	Type    string `gorm:"column:type;size:16" json:"type" enums:"http,ws,lite,grpc,jsonrpc,rest,graphql,ipc,sse,solidity-grpc,solidity-http" example:"http"`
 	Weight  int    `gorm:"column:weight;default:1" json:"weight" example:"1"`
 	ApiKey  string `gorm:"column:api_key;size:255" json:"-"`
 	Enabled bool   `gorm:"column:enabled;default:true" json:"enabled" example:"true"`
@@ -41,4 +41,11 @@ type RpcNode struct {
 
 func (r *RpcNode) TableName() string {
 	return "rpc_nodes"
+}
+
+// ScannerNodeMigration records completed imports per scanner database. Changing
+// or deleting an imported node is an operator decision that survives restarts.
+type ScannerNodeMigration struct {
+	StoreID  string `gorm:"primaryKey;size:64"`
+	LegacyID uint64 `gorm:"primaryKey;autoIncrement:false"`
 }

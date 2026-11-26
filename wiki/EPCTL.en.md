@@ -1,5 +1,7 @@
 # epctl Installation and Verification Scripts
 
+[Documentation index](README.md) · [简体中文](EPCTL.md)
+
 `epctl` is the repo-root Linux binary installer and service manager for released `epusdt` binaries on GitHub Releases.
 `epctl-docker-test.sh` is the matching end-to-end validation script. It launches Ubuntu + systemd in Docker and verifies download, install, startup, upgrade, and init-password behavior with real release artifacts.
 
@@ -33,11 +35,13 @@ Notes:
 |------|------|
 | Install directory | `/opt/epusdt` |
 | Main binary | `/opt/epusdt/epusdt` |
+| Scanner binary | `/opt/epusdt/chainscanner` |
 | Active config | `/opt/epusdt/.env` |
+| Scanner config | `/opt/epusdt/chainscanner.json` |
 | Example config | `/opt/epusdt/.env.example` |
 | Extracted frontend assets | `/opt/epusdt/www` |
 | Download cache | `/tmp/epusdt/<tag>/` |
-| systemd unit | `/etc/systemd/system/epusdt.service` |
+| systemd unit | `/etc/systemd/system/epusdt.service`, `/etc/systemd/system/chainscanner.service` |
 | Global epctl path | `/usr/local/bin/epctl` |
 
 ## Quick Start
@@ -69,24 +73,44 @@ epctl
 Download a specific release:
 
 ```bash
-./epctl download --tag v1.0.8
+./epctl download --tag v2.1.0
 ```
 
-Install the service:
+Install the service (defaults to `--component epusdt` with the embedded scanner. Use `--component all` for two separate services):
 
 ```bash
-./epctl install --tag v1.0.8 \
+./epctl install --tag v2.1.0 \
   --app-uri https://pay.example.com \
   --listen 127.0.0.1:18000
 ```
 
-Upgrade to a newer release:
+Deploy `chainscanner` standalone (auto-generates or accepts tokens and prints connection credentials):
 
 ```bash
-./epctl upgrade --tag v1.0.9
+./epctl install --component chainscanner \
+  --scanner-listen 0.0.0.0:9081
+```
+
+Deploy `epusdt` standalone (connecting to a remote `chainscanner`):
+
+```bash
+./epctl install --component epusdt \
+  --app-uri https://pay.example.com \
+  --listen 127.0.0.1:8000 \
+  --scanner-url http://10.0.0.2:9081 \
+  --scanner-token <chainscanner_token> \
+  --scanner-admin-token <chainscanner_admin_token>
+```
+
+Upgrade to a newer release (auto-detects installed components, or pass `--component all|epusdt|chainscanner`):
+
+```bash
+./epctl upgrade --tag v2.1.0
 ```
 
 Running `./epctl upgrade --tag ...` directly restarts `epusdt` immediately after the files are replaced.
+
+Older epctl units mount the EPUSDT executable read-only. Use the updated epctl for one command-line upgrade and restart to refresh the unit before installing future binary updates from the admin console. Custom units must allow the service account to create a backup in the installation directory and atomically replace the EPUSDT executable.
 If you want to replace files only, pass `--no-restart`.
 If you want an explicit confirmation step, pass `--prompt-restart`; in an interactive terminal the prompt is `[Y/n]`, so pressing Enter restarts by default.
 
@@ -175,7 +199,7 @@ Restart=always
 RestartSec=3
 ```
 
-The working directory stays at `/opt/epusdt` because the program extracts its `www/` assets next to the binary.
+The working directory is `/opt/epusdt`. The gateway serves its frontend from the executable.
 
 ## What `init-password` Does
 
@@ -210,8 +234,8 @@ The repo also provides:
 Examples:
 
 ```bash
-./epctl-docker-test.sh v1.0.6
-./epctl-docker-test.sh --lang en v1.0.6 v1.0.8
+./epctl-docker-test.sh v2.1.0
+./epctl-docker-test.sh --lang en v2.0.0 v2.1.0
 ```
 
 It performs these checks on the local machine:
@@ -222,7 +246,7 @@ It performs these checks on the local machine:
 - downloads real GitHub Release artifacts
 - installs `epusdt`
 - when `upgrade-tag` is provided, verifies `upgrade --no-restart`, the default non-interactive `upgrade`, and both the `n` / Enter branches of `upgrade --prompt-restart`
-- verifies the systemd service, `www/index.html`, config output, logs, and status
+- verifies the systemd service, HTTP frontend, config output, logs, and status
 - verifies that `init-password` succeeds once and later returns `10040` after the admin password is changed
 
 Requirements:

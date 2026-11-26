@@ -1,45 +1,132 @@
 package task
 
 import (
+	"context"
+	"errors"
+	"path/filepath"
+	"sync"
+	"time"
+
+	scanner "github.com/GMWalletApp/ChainScanner"
+	"github.com/GMWalletApp/epusdt/config"
+	"github.com/GMWalletApp/epusdt/internal/diagnostics"
+	"github.com/GMWalletApp/epusdt/model/data"
+	"github.com/GMWalletApp/epusdt/model/mdb"
+	"github.com/GMWalletApp/epusdt/model/service"
 	"github.com/GMWalletApp/epusdt/util/log"
-	"github.com/robfig/cron/v3"
 )
 
-func Start() {
-	log.Sugar.Info("[task] Starting task scheduler...")
-	// The ETH listener short-circuits internally when chain is disabled
-	// or no tokens are configured, so always launch the goroutine.
-	go StartEthereumWebSocketListener()
-	go StartBscWebSocketListener()
-	go StartPolygonWebSocketListener()
-	go StartPlasmaWebSocketListener()
-	go StartEthereumBackfillScannerListener()
-	go StartBscBackfillScannerListener()
-	go StartPolygonBackfillScannerListener()
-	go StartPlasmaBackfillScannerListener()
-	go StartTronBlockScannerListener()
-	go StartTonBlockScannerListener()
-	go StartAptosLedgerScannerListener()
-
-	c := cron.New()
-
-	// Solana polling
-	_, err := c.AddJob("@every 5s", ListenSolJob{})
-	if err != nil {
-		log.Sugar.Errorf("[task] Failed to add ListenSolJob: %v", err)
-		return
+func Start() (config.ScannerConnection, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var workers sync.WaitGroup
+	stopDiagnostics, diagErr := diagnostics.Start(context.Background(), filepath.Join(config.RuntimePath, "diagnostics"), func() bool { return data.GetSettingBool(mdb.SettingKeyDetailedDiagnostics, true) })
+	if diagErr != nil {
+		log.Sugar.Error("[diagnostics] unable to open support log store")
 	}
-
-	log.Sugar.Info("[task] ListenSolJob scheduled successfully (@every 5s)")
-
-	// RPC node health checks
-	_, err = c.AddJob("@every 30s", RpcHealthJob{})
-	if err != nil {
-		log.Sugar.Errorf("[task] Failed to add RpcHealthJob: %v", err)
-		return
+	var closeEmbedded func()
+	stop := func() {
+		cancel()
+		workers.Wait()
+		if closeEmbedded != nil {
+			closeEmbedded()
+		}
+		if stopDiagnostics != nil {
+			stopDiagnostics()
+		}
 	}
-	log.Sugar.Info("[task] RpcHealthJob scheduled successfully (@every 30s)")
+	// Hosted OKX payments settle independently of the on-chain scanner.
+	workers.Go(func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				XLayerPollJob{}.Run()
+			}
+		}
+	})
+	connection := config.ExternalScanner()
+	var err error
+	if connection.URL == "" {
+		connection, closeEmbedded, err = startLocalScanner(ctx)
+	}
+	data.UseScannerNodes(connection)
+	diagnostics.Record(diagnostics.Event{Event: "gateway.start", Version: config.GetAppVersion()})
+	if err == nil {
+		workers.Go(func() { recordNodeHealth(ctx, connection) })
+	}
+	if err == nil && connection.Embedded {
+		if _, migrationErr := data.MigrateScannerNodes(ctx, connection, true, nil); migrationErr != nil {
+			log.Sugar.Errorf("[ChainScanner] node migration: %v", migrationErr)
+		}
+	}
+	if err == nil {
+		err = startPaymentFeed(ctx, &workers, connection)
+	}
+	if err != nil {
+		diagnostics.Record(diagnostics.Event{Event: "scanner.start", Outcome: "unavailable"})
+		service.EnsurePaymentWatch = func(string, string) error { return err }
+		log.Sugar.Errorf("[ChainScanner] %v", err)
+	}
+	return connection, stop
+}
 
-	c.Start()
-	log.Sugar.Info("[task] Task scheduler started")
+func startLocalScanner(ctx context.Context) (config.ScannerConnection, func(), error) {
+	chains, err := data.ListChains()
+	if err != nil {
+		return config.ScannerConnection{}, nil, err
+	}
+	var networks []scanner.Network
+	// Subscription reconciliation already observes changes to chain enablement.
+	// Register disabled networks too so enabling them later needs no restart.
+	for _, chain := range chains {
+		if scanner.Supported(chain.Network) {
+			networks = append(networks, scanner.Network{Name: chain.Network, Confirmations: int64(chain.MinConfirmations), IntervalSeconds: chain.ScanIntervalSec})
+		}
+	}
+	return startEmbeddedScanner(ctx, filepath.Join(config.RuntimePath, "chainscanner.sqlite"), networks)
+}
+
+func startPaymentFeed(ctx context.Context, workers *sync.WaitGroup, connection config.ScannerConnection) error {
+	url, err := connection.Endpoint()
+	if err != nil {
+		return err
+	}
+	token, err := connection.Token(false)
+	if err != nil {
+		return err
+	}
+	transport := connection.Transport
+	if transport != "" && transport != "ws" && transport != "grpc" && transport != "http" {
+		return errors.New("unsupported CHAINSCANNER_TRANSPORT")
+	}
+	client := scanner.Client{URL: url, Token: token}
+	verifier := newTransactionClient(client)
+	service.LookupPaymentTransaction = verifier.full
+	subscriptions := &paymentSubscriptions{feed: client}
+	service.EnsurePaymentWatch = subscriptions.ensure
+	for range 4 {
+		workers.Go(func() { service.RunPaymentConfirmations(ctx, client, verifier.automatic) })
+	}
+	for _, network := range scannerNetworks {
+		workers.Go(func() { runScannerFeed(ctx, client, network, transport) })
+	}
+	workers.Go(func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for ctx.Err() == nil {
+			if err := subscriptions.refresh(ctx); err != nil && ctx.Err() == nil {
+				diagnostics.Record(diagnostics.Event{Event: "scanner.subscription", Outcome: "refresh_failed"})
+				log.Sugar.Errorf("[ChainScanner] subscribe: %v", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	})
+	return nil
 }

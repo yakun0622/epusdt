@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GMWalletApp/epusdt/config"
@@ -141,6 +142,7 @@ func TestWriteEnvFile(t *testing.T) {
 		"order_notice_max_retry=3",
 		"db_type=sqlite",
 		"install=false",
+		"chainscanner_transport=ws",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("env file missing %q\ncontent:\n%s", want, content)
@@ -177,15 +179,7 @@ func TestInstallAPIDefaults(t *testing.T) {
 
 func TestInstallServerRootRedirectsToInstall(t *testing.T) {
 	dir := t.TempDir()
-	wwwRoot := filepath.Join(dir, "www")
-	if err := os.MkdirAll(wwwRoot, 0o755); err != nil {
-		t.Fatalf("mkdir www root: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(wwwRoot, "index.html"), []byte("install-ui"), 0o644); err != nil {
-		t.Fatalf("write index.html: %v", err)
-	}
-
-	e, _ := newInstallServer(filepath.Join(dir, ".env"), wwwRoot)
+	e, _ := newInstallServer(filepath.Join(dir, ".env"), http.FS(fstest.MapFS{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -201,16 +195,9 @@ func TestInstallServerRootRedirectsToInstall(t *testing.T) {
 
 func TestInstallServerServesSPAOnInstallRoute(t *testing.T) {
 	dir := t.TempDir()
-	wwwRoot := filepath.Join(dir, "www")
-	if err := os.MkdirAll(wwwRoot, 0o755); err != nil {
-		t.Fatalf("mkdir www root: %v", err)
-	}
 	const wantBody = "install-ui"
-	if err := os.WriteFile(filepath.Join(wwwRoot, "index.html"), []byte(wantBody), 0o644); err != nil {
-		t.Fatalf("write index.html: %v", err)
-	}
-
-	e, _ := newInstallServer(filepath.Join(dir, ".env"), wwwRoot)
+	frontend := fstest.MapFS{"index.html": {Data: []byte(wantBody)}}
+	e, _ := newInstallServer(filepath.Join(dir, ".env"), http.FS(frontend))
 
 	req := httptest.NewRequest(http.MethodGet, "/install", nil)
 	rec := httptest.NewRecorder()
@@ -381,5 +368,58 @@ func TestInstallAPISubmitInvalidPort(t *testing.T) {
 	}
 	if _, err := os.Stat(envPath); err == nil {
 		t.Error("env file should not have been written for invalid port")
+	}
+}
+
+func TestInstallerPreservesUnsupportedDatabaseConfig(t *testing.T) {
+	for _, legacy := range []string{"db_type=postgres", "db_type=unknown", "postgres_host=localhost"} {
+		t.Run(legacy, func(t *testing.T) {
+			resetInstallTestState(t)
+			path := filepath.Join(t.TempDir(), ".env")
+			original := legacy + "\ninstall=true\n"
+			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeEnvFile(path, &InstallRequest{}, true); err == nil {
+				t.Fatalf("installer database check: %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != original {
+				t.Fatalf("existing config changed: %q (error %v)", got, err)
+			}
+			if err := initInstallConfig(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := dao.DBInit(); err == nil {
+				t.Fatalf("startup database check: %v", err)
+			}
+			if _, err := os.Stat(config.GetPrimarySqlitePath()); !os.IsNotExist(err) {
+				t.Fatalf("unexpected SQLite database after failed startup: %v", err)
+			}
+		})
+	}
+}
+
+func TestInstallerKeepsMySQLDatabaseConfig(t *testing.T) {
+	for _, dbType := range []string{"", "db_type=mysql\n"} {
+		t.Run(strings.TrimSpace(dbType), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".env")
+			original := dbType + "mysql_host=mysql.example\nmysql_database=payments\nmysql_user=merchant\nmysql_passwd=fixture-password\nmysql_table_prefix=legacy_\n"
+			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeEnvFile(path, &InstallRequest{}, true); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range []string{"db_type=mysql", "mysql_host=mysql.example", "mysql_database=payments", "mysql_user=merchant", "mysql_passwd=fixture-password", "mysql_table_prefix=legacy_"} {
+				if !strings.Contains(string(got), line+"\n") {
+					t.Errorf("rewritten configuration missing %q", line)
+				}
+			}
+		})
 	}
 }

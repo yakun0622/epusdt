@@ -8,7 +8,6 @@ import (
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/GMWalletApp/epusdt/notify"
-	"github.com/GMWalletApp/epusdt/telegram"
 	"github.com/GMWalletApp/epusdt/util/constant"
 	"github.com/labstack/echo/v4"
 )
@@ -67,12 +66,12 @@ func (c *BaseAdminController) ListNotificationChannels(ctx echo.Context) error {
 // notificationChannelSafeView is an explicit allowlist, never a spread of
 // the raw DB model. Existing compiled pages retain their legacy response.
 type notificationChannelSafeView struct {
-	ID uint64 `json:"id"`
-	Type string `json:"type"`
-	Name string `json:"name"`
-	Enabled bool `json:"enabled"`
-	Configured bool `json:"configured"`
-	Events map[string]bool `json:"events"`
+	ID         uint64          `json:"id"`
+	Type       string          `json:"type"`
+	Name       string          `json:"name"`
+	Enabled    bool            `json:"enabled"`
+	Configured bool            `json:"configured"`
+	Events     map[string]bool `json:"events"`
 }
 
 func newNotificationChannelSafeView(row mdb.NotificationChannel) notificationChannelSafeView {
@@ -80,13 +79,17 @@ func newNotificationChannelSafeView(row mdb.NotificationChannel) notificationCha
 	var raw map[string]bool
 	if json.Unmarshal([]byte(row.Events), &raw) == nil {
 		for _, event := range []string{mdb.NotifyEventPaySuccess, mdb.NotifyEventOrderExpired, mdb.NotifyEventDailyReport} {
-			if raw[event] { events[event] = true } else { events[event] = false }
+			if raw[event] {
+				events[event] = true
+			} else {
+				events[event] = false
+			}
 		}
 	}
 	return notificationChannelSafeView{
 		ID: row.ID, Type: row.Type, Name: row.Name, Enabled: row.Enabled,
 		Configured: strings.TrimSpace(row.Config) != "",
-		Events: events,
+		Events:     events,
 	}
 }
 
@@ -135,9 +138,6 @@ func (c *BaseAdminController) CreateNotificationChannel(ctx echo.Context) error 
 	if err := data.CreateNotificationChannel(row); err != nil {
 		return c.FailJson(ctx, err)
 	}
-	if strings.ToLower(strings.TrimSpace(row.Type)) == mdb.NotificationTypeTelegram {
-		telegram.ReloadBotAsync("admin create telegram channel")
-	}
 	if ctx.QueryParam("redact") == "1" {
 		ctx.Response().Header().Set("Cache-Control", "no-store")
 		return c.SucJson(ctx, newNotificationChannelSafeView(*row))
@@ -162,12 +162,6 @@ func (c *BaseAdminController) UpdateNotificationChannel(ctx echo.Context) error 
 	if err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
 	}
-	existing, err := data.GetNotificationChannelByID(id)
-	if err != nil {
-		return c.FailJson(ctx, err)
-	}
-	isTelegram := existing != nil && existing.ID > 0 && strings.ToLower(strings.TrimSpace(existing.Type)) == mdb.NotificationTypeTelegram
-
 	req := new(UpdateNotificationChannelRequest)
 	if err := ctx.Bind(req); err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
@@ -194,9 +188,6 @@ func (c *BaseAdminController) UpdateNotificationChannel(ctx echo.Context) error 
 	if err := data.UpdateNotificationChannelFields(id, fields); err != nil {
 		return c.FailJson(ctx, err)
 	}
-	if isTelegram {
-		telegram.ReloadBotAsync("admin update telegram channel")
-	}
 	return c.SucJson(ctx, nil)
 }
 
@@ -217,21 +208,12 @@ func (c *BaseAdminController) ChangeNotificationChannelStatus(ctx echo.Context) 
 	if err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
 	}
-	existing, err := data.GetNotificationChannelByID(id)
-	if err != nil {
-		return c.FailJson(ctx, err)
-	}
-	isTelegram := existing != nil && existing.ID > 0 && strings.ToLower(strings.TrimSpace(existing.Type)) == mdb.NotificationTypeTelegram
-
 	req := new(ChangeChannelStatusRequest)
 	if err := ctx.Bind(req); err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
 	}
 	if err := data.UpdateNotificationChannelFields(id, map[string]interface{}{"enabled": req.Enabled}); err != nil {
 		return c.FailJson(ctx, err)
-	}
-	if isTelegram {
-		telegram.ReloadBotAsync("admin change telegram channel status")
 	}
 	return c.SucJson(ctx, nil)
 }
@@ -251,17 +233,8 @@ func (c *BaseAdminController) DeleteNotificationChannel(ctx echo.Context) error 
 	if err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
 	}
-	existing, err := data.GetNotificationChannelByID(id)
-	if err != nil {
-		return c.FailJson(ctx, err)
-	}
-	isTelegram := existing != nil && existing.ID > 0 && strings.ToLower(strings.TrimSpace(existing.Type)) == mdb.NotificationTypeTelegram
-
 	if err := data.DeleteNotificationChannelByID(id); err != nil {
 		return c.FailJson(ctx, err)
-	}
-	if isTelegram {
-		telegram.ReloadBotAsync("admin delete telegram channel")
 	}
 	return c.SucJson(ctx, nil)
 }

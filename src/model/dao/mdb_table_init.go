@@ -14,12 +14,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var once sync.Once
+var initializeTables = sync.OnceValue(migrateTables)
 
 // ResetMdbTableInitForTest resets the install/startup migration guard so tests
 // can exercise fresh temporary databases in the same process.
 func ResetMdbTableInitForTest() {
-	once = sync.Once{}
+	initializeTables = sync.OnceValue(migrateTables)
 }
 
 // MdbTableInit performs AutoMigrate for all primary DB tables and seeds
@@ -29,75 +29,86 @@ func ResetMdbTableInitForTest() {
 // established.  The install wizard (see install/installer.go) writes the
 // .env file before bootstrap runs, so this function always finds the DB
 // available.
-func MdbTableInit() {
-	once.Do(func() {
-		migrations := []struct {
-			name  string
-			model interface{}
-		}{
-			{"Orders", &mdb.Orders{}},
-			{"PaymentTxClaim", &mdb.PaymentTxClaim{}},
-			{"CallbackDelivery", &mdb.CallbackDelivery{}},
-			{"WalletAddress", &mdb.WalletAddress{}},
-			{"AdminUser", &mdb.AdminUser{}},
-			{"ApiKey", &mdb.ApiKey{}},
-			{"Setting", &mdb.Setting{}},
-			{"RateCache", &mdb.RateCache{}},
-			{"NotificationChannel", &mdb.NotificationChannel{}},
-			{"Chain", &mdb.Chain{}},
-			{"ChainToken", &mdb.ChainToken{}},
-			{"RpcNode", &mdb.RpcNode{}},
-			{"ProviderOrder", &mdb.ProviderOrder{}},
-		}
-		for _, m := range migrations {
-			var err error
-			if m.name=="Orders" {
-				err=MigrateOrdersCompatible(Mdb)
-			} else {
-				err=Mdb.AutoMigrate(m.model)
-			}
-			if err != nil {
-				color.Red.Printf("[store_db] AutoMigrate DB(%s),err=%s\n", m.name, err)
-				return
-			}
-		}
+func MdbTableInit() error { return initializeTables() }
 
-		seedChains()
-		backfillRpcNodePurpose()
-		seedRpcNodes()
-		seedChainTokens()
-		seedDefaultSettings()
-		seedTelegramChannelFromSettings()
-	})
+func migrateTables() error {
+	if err := MigrateOrdersCompatible(Mdb); err != nil {
+		return fmt.Errorf("migrate Orders: %w", err)
+	}
+	migrations := []struct {
+		name  string
+		model interface{}
+	}{
+		{"PaymentTxClaim", &mdb.PaymentTxClaim{}},
+		{"CallbackDelivery", &mdb.CallbackDelivery{}},
+		{"PaymentConfirmation", &mdb.PaymentConfirmation{}},
+		{"WalletAddress", &mdb.WalletAddress{}},
+		{"AdminUser", &mdb.AdminUser{}},
+		{"ApiKey", &mdb.ApiKey{}},
+		{"CallbackSigningKey", &mdb.CallbackSigningKey{}},
+		{"Setting", &mdb.Setting{}},
+		{"RateCache", &mdb.RateCache{}},
+		{"NotificationChannel", &mdb.NotificationChannel{}},
+		{"Chain", &mdb.Chain{}},
+		{"ChainToken", &mdb.ChainToken{}},
+		{"RpcNode", &mdb.RpcNode{}},
+		{"ScannerNodeMigration", &mdb.ScannerNodeMigration{}},
+		{"ProviderOrder", &mdb.ProviderOrder{}},
+	}
+	for _, m := range migrations {
+		if err := migratePrimaryTable(Mdb, m.model); err != nil {
+			return fmt.Errorf("migrate %s: %w", m.name, err)
+		}
+	}
+
+	if err := backfillCallbackSigningKeys(Mdb); err != nil {
+		return fmt.Errorf("backfill callback signing keys: %w", err)
+	}
+	seedChains()
+	backfillRpcNodePurpose()
+	if err := seedChainTokens(); err != nil {
+		return fmt.Errorf("seed chain tokens: %w", err)
+	}
+	seedDefaultSettings()
+	seedTelegramChannelFromSettings()
+	return nil
 }
 
-
-// MigrateOrdersCompatible preserves MySQL 5.7 columns/index names on restart.
-// GORM's repeated AutoMigrate can incorrectly attempt DROP INDEX
-// uni_orders_trade_id even though the existing unique index is named
-// orders_trade_id_uindex. On an existing MySQL orders table we only add
-// missing columns and indexes; never rewrite existing payment data or
-// truncate legacy IDs. Fresh installs use normal AutoMigrate.
+// MigrateOrdersCompatible upgrades the order table without rewriting legacy MySQL IDs.
 func MigrateOrdersCompatible(db *gorm.DB) error {
-	model:=&mdb.Orders{}
-	m:=db.Migrator()
-	if db.Dialector.Name()!="mysql" || !m.HasTable(model) {
+	return migratePrimaryTable(db, &mdb.Orders{})
+}
+
+// GORM can mistake MySQL 5.7 unique indexes for foreign-key constraints
+// during repeat migration. Add missing columns and indexes while keeping
+// the existing schema and records intact. Fresh tables use AutoMigrate.
+func migratePrimaryTable(db *gorm.DB, model interface{}) error {
+	m := db.Migrator()
+	if db.Dialector.Name() != "mysql" || !m.HasTable(model) {
 		return db.AutoMigrate(model)
 	}
-	stmt:=&gorm.Statement{DB:db}
-	if err:=stmt.Parse(model);err!=nil{return err}
-	for _,field:=range stmt.Schema.Fields {
-		if field.DBName==""||field.IgnoreMigration {continue}
-		if m.HasColumn(model,field.DBName) {continue}
-		if err:=m.AddColumn(model,field.Name);err!=nil {
-			return fmt.Errorf("add legacy order column %s: %w",field.DBName,err)
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(model); err != nil {
+		return err
+	}
+	for _, field := range stmt.Schema.Fields {
+		if field.DBName == "" || field.IgnoreMigration {
+			continue
+		}
+		if m.HasColumn(model, field.DBName) {
+			continue
+		}
+		if err := m.AddColumn(model, field.Name); err != nil {
+			return fmt.Errorf("add column %s: %w", field.DBName, err)
 		}
 	}
-	for _,index:=range stmt.Schema.ParseIndexes() {
-		name:=index.Name
-		if m.HasIndex(model,name) {continue}
-		if err:=m.CreateIndex(model,name);err!=nil {
-			return fmt.Errorf("create legacy order index %s: %w",name,err)
+	for _, index := range stmt.Schema.ParseIndexes() {
+		name := index.Name
+		if m.HasIndex(model, name) {
+			continue
+		}
+		if err := m.CreateIndex(model, name); err != nil {
+			return fmt.Errorf("create index %s: %w", name, err)
 		}
 	}
 	return nil
@@ -107,6 +118,14 @@ func MigrateOrdersCompatible(db *gorm.DB) error {
 // ON CONFLICT DO NOTHING so re-runs are no-ops and admin edits persist.
 func seedChains() {
 	defaults := []mdb.Chain{
+		{Network: mdb.NetworkSui, DisplayName: "Sui", Enabled: true, MinConfirmations: 1, ScanIntervalSec: 3},
+		{Network: mdb.NetworkBase, DisplayName: "Base", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
+		{Network: mdb.NetworkOptimism, DisplayName: "OP Mainnet", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
+		{Network: mdb.NetworkAvalanche, DisplayName: "Avalanche C-Chain", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
+		{Network: mdb.NetworkArc, DisplayName: "Arc", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
+		{Network: mdb.NetworkMonad, DisplayName: "Monad", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
+		{Network: mdb.NetworkHyperEVM, DisplayName: "HyperEVM", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
+		{Network: mdb.NetworkArbitrum, DisplayName: "Arbitrum One", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 3},
 		{Network: mdb.NetworkTron, DisplayName: "TRON", Enabled: true, MinConfirmations: 1, ScanIntervalSec: 5},
 		{Network: mdb.NetworkEthereum, DisplayName: "Ethereum", Enabled: true, MinConfirmations: 3, ScanIntervalSec: 5},
 		{Network: mdb.NetworkSolana, DisplayName: "Solana", Enabled: true, MinConfirmations: 1, ScanIntervalSec: 5},
@@ -125,11 +144,26 @@ func seedChains() {
 // ON CONFLICT DO NOTHING on the (network, symbol) unique index so
 // re-runs are no-ops and admin edits to contract_address / decimals /
 // min_amount persist across restarts.
-func seedChainTokens() {
+func seedChainTokens() error {
 	// Contract-address rows are matched by scanners via exact contract
 	// lookup. Native-token rows (empty contract_address) are matched by
 	// symbol — these act as admin toggles for the native payment path.
 	defaults := []mdb.ChainToken{
+		{Network: mdb.NetworkSui, Symbol: "USDC", ContractAddress: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkSui, Symbol: "SUI", ContractAddress: "0x2::sui::SUI", Decimals: 9, Enabled: true},
+		{Network: mdb.NetworkBase, Symbol: "USDC", ContractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkOptimism, Symbol: "USDC", ContractAddress: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkBase, Symbol: "ETH", ContractAddress: "", Decimals: 18, Enabled: true},
+		{Network: mdb.NetworkOptimism, Symbol: "ETH", ContractAddress: "", Decimals: 18, Enabled: true},
+		{Network: mdb.NetworkAvalanche, Symbol: "USDC", ContractAddress: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkAvalanche, Symbol: "AVAX", ContractAddress: "", Decimals: 18, Enabled: true},
+		{Network: mdb.NetworkArc, Symbol: "USDC", ContractAddress: "0x3600000000000000000000000000000000000000", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkMonad, Symbol: "USDC", ContractAddress: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkMonad, Symbol: "MON", ContractAddress: "", Decimals: 18, Enabled: true},
+		{Network: mdb.NetworkHyperEVM, Symbol: "USDC", ContractAddress: "0xb88339CB7199b77E23DB6E890353E22632Ba630f", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkHyperEVM, Symbol: "HYPE", ContractAddress: "", Decimals: 18, Enabled: true},
+		{Network: mdb.NetworkArbitrum, Symbol: "USDC", ContractAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", Decimals: 6, Enabled: true},
+		{Network: mdb.NetworkArbitrum, Symbol: "ETH", ContractAddress: "", Decimals: 18, Enabled: true},
 		// TRON
 		{Network: mdb.NetworkTron, Symbol: "USDT", ContractAddress: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", Decimals: 6, Enabled: true},
 		{Network: mdb.NetworkTron, Symbol: "TRX", ContractAddress: "", Decimals: 6, Enabled: true},
@@ -155,47 +189,36 @@ func seedChainTokens() {
 		{Network: mdb.NetworkAptos, Symbol: "USDC", ContractAddress: "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", Decimals: 6, Enabled: true},
 		{Network: mdb.NetworkAptos, Symbol: "USDT", ContractAddress: "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b", Decimals: 6, Enabled: true},
 	}
-	if err := Mdb.Clauses(clause.OnConflict{DoNothing: true}).Create(&defaults).Error; err != nil {
-		color.Red.Printf("[store_db] seed chain_tokens err=%s\n", err)
+	insert := Mdb.Clauses(clause.OnConflict{DoNothing: true}).Session(&gorm.Session{})
+	if err := insert.Create(&defaults).Error; err != nil {
+		return fmt.Errorf("seed default tokens: %w", err)
 	}
-}
 
-// seedRpcNodes inserts default RPC endpoints for each chain. Checks per
-// (network, url) so re-runs are idempotent and admin edits persist.
-func seedRpcNodes() {
-	defaults := defaultRpcNodes()
-	for _, d := range defaults {
-		var count int64
-		if err := Mdb.Model(&mdb.RpcNode{}).
-			Where("network = ? AND url = ?", d.Network, d.Url).
-			Count(&count).Error; err != nil {
-			color.Red.Printf("[store_db] seed rpc_nodes check err=%s\n", err)
-			continue
-		}
-		if count > 0 {
-			continue
-		}
-		if err := Mdb.Create(&d).Error; err != nil {
-			color.Red.Printf("[store_db] seed rpc_nodes err=%s\n", err)
-		}
+	// Use explicit map values so GORM does not replace false with the model default.
+	now := Mdb.NowFunc()
+	a7a5 := []map[string]interface{}{
+		{"network": mdb.NetworkTron, "symbol": "A7A5", "contract_address": "TLeVfrdym8RoJreJ23dAGyfJDygRtiWKBZ", "decimals": 6, "enabled": false, "created_at": now, "updated_at": now},
+		{"network": mdb.NetworkEthereum, "symbol": "A7A5", "contract_address": "0x6fA0BE17e4beA2fCfA22ef89BF8ac9aab0AB0fc9", "decimals": 6, "enabled": false, "created_at": now, "updated_at": now},
 	}
-}
+	if err := insert.Model(&mdb.ChainToken{}).Create(&a7a5).Error; err != nil {
+		return fmt.Errorf("seed A7A5: %w", err)
+	}
 
-func defaultRpcNodes() []mdb.RpcNode {
-	defaults := []mdb.RpcNode{
-		{Network: mdb.NetworkTron, Url: "https://api.trongrid.io", Type: mdb.RpcNodeTypeHttp, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkEthereum, Url: "wss://ethereum.publicnode.com", Type: mdb.RpcNodeTypeWs, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkSolana, Url: "https://api.mainnet-beta.solana.com", Type: mdb.RpcNodeTypeHttp, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkBsc, Url: "wss://bsc.drpc.org", Type: mdb.RpcNodeTypeWs, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkPolygon, Url: "wss://polygon-bor-rpc.publicnode.com", Type: mdb.RpcNodeTypeWs, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkPlasma, Url: "wss://rpc.plasma.to", Type: mdb.RpcNodeTypeWs, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkTon, Url: "https://ton-blockchain.github.io/global.config.json", Type: mdb.RpcNodeTypeLite, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkAptos, Url: "https://aptos-rest.publicnode.com/", Type: mdb.RpcNodeTypeHttp, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeGeneral, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkEthereum, Url: "https://rpc.epusdt.com/ethereum", Type: mdb.RpcNodeTypeHttp, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeManualVerify, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkBsc, Url: "https://rpc.epusdt.com/binance", Type: mdb.RpcNodeTypeHttp, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeManualVerify, Status: mdb.RpcNodeStatusUnknown},
-		{Network: mdb.NetworkPolygon, Url: "https://rpc.epusdt.com/polygon", Type: mdb.RpcNodeTypeHttp, Weight: 1, Enabled: true, Purpose: mdb.RpcNodePurposeManualVerify, Status: mdb.RpcNodeStatusUnknown},
+	// Respect existing aliases, including soft-deleted rows.
+	const arbitrumUSDT = "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+	var existing int64
+	if err := Mdb.Unscoped().Model(&mdb.ChainToken{}).
+		Where("network = ? AND (LOWER(symbol) = ? OR LOWER(contract_address) = ?)",
+			mdb.NetworkArbitrum, "usdt", strings.ToLower(arbitrumUSDT)).
+		Count(&existing).Error; err != nil {
+		return fmt.Errorf("check Arbitrum USDT: %w", err)
 	}
-	return defaults
+	if existing > 0 {
+		return nil
+	}
+	return insert.Create(&mdb.ChainToken{
+		Network: mdb.NetworkArbitrum, Symbol: "USDT", ContractAddress: arbitrumUSDT, Decimals: 6, Enabled: true,
+	}).Error
 }
 
 func backfillRpcNodePurpose() {
@@ -215,7 +238,10 @@ func seedDefaultSettings() {
 	}
 	defaultRateMode := defaultRateModeForSeed()
 	defaults := []mdb.Setting{
+		{Group: mdb.SettingGroupBrand, Key: mdb.SettingKeyBrandWithdrawalReminder, Value: "false", Type: mdb.SettingTypeBool},
 		{Group: mdb.SettingGroupSystem, Key: mdb.SettingKeyAmountPrecision, Value: "2", Type: mdb.SettingTypeInt},
+		{Group: mdb.SettingGroupSystem, Key: mdb.SettingKeyStrictPayment, Value: "true", Type: mdb.SettingTypeBool},
+		{Group: mdb.SettingGroupSystem, Key: mdb.SettingKeyDetailedDiagnostics, Value: "true", Type: mdb.SettingTypeBool},
 		{Group: mdb.SettingGroupSystem, Key: mdb.SettingKeySystemLogLevel, Value: mdb.SettingDefaultSystemLogLevel, Type: mdb.SettingTypeString},
 		{Group: mdb.SettingGroupRate, Key: mdb.SettingKeyRateForcedRateList, Value: mdb.SettingDefaultRateForcedRateList, Type: mdb.SettingTypeJSON},
 		{Group: mdb.SettingGroupRate, Key: mdb.SettingKeyRateMode, Value: defaultRateMode, Type: mdb.SettingTypeString},
@@ -228,6 +254,13 @@ func seedDefaultSettings() {
 		{Group: mdb.SettingGroupOkPay, Key: mdb.SettingKeyOkPayCallbackURL, Value: okPayCallbackURL, Type: mdb.SettingTypeString},
 		{Group: mdb.SettingGroupOkPay, Key: mdb.SettingKeyOkPayTimeoutSeconds, Value: "10", Type: mdb.SettingTypeInt},
 		{Group: mdb.SettingGroupOkPay, Key: mdb.SettingKeyOkPayAllowTokens, Value: "USDT,TRX", Type: mdb.SettingTypeString},
+		{Group: mdb.SettingGroupXLayer, Key: mdb.SettingKeyXLayerEnabled, Value: "false", Type: mdb.SettingTypeBool},
+		// legacy key: nothing reads it anymore (fixed xlayerAPIBaseURL in
+		// model/service/xlayer_service.go); kept so existing installs and
+		// the settings page group read stay stable
+		{Group: mdb.SettingGroupXLayer, Key: mdb.SettingKeyXLayerAPIURL, Value: "https://web3.okx.com", Type: mdb.SettingTypeString},
+		{Group: mdb.SettingGroupXLayer, Key: mdb.SettingKeyXLayerTimeoutSeconds, Value: "10", Type: mdb.SettingTypeInt},
+		{Group: mdb.SettingGroupXLayer, Key: mdb.SettingKeyXLayerAllowTokens, Value: "USDC,USDT0,USDG", Type: mdb.SettingTypeString},
 	}
 	if err := Mdb.Clauses(clause.OnConflict{DoNothing: true}).Create(&defaults).Error; err != nil {
 		color.Red.Printf("[store_db] seed default settings err=%s\n", err)
@@ -250,7 +283,7 @@ func defaultRateModeForSeed() string {
 	}
 
 	var apiSetting mdb.Setting
-	if err := Mdb.Where("key = ?", mdb.SettingKeyRateApiUrl).Limit(1).Find(&apiSetting).Error; err != nil {
+	if err := Mdb.Where("`key` = ?", mdb.SettingKeyRateApiUrl).Limit(1).Find(&apiSetting).Error; err != nil {
 		color.Red.Printf("[store_db] detect legacy rate api setting err=%s\n", err)
 	}
 	if strings.TrimSpace(apiSetting.Value) != "" || strings.TrimSpace(config.GetRateApiUrlFromEnv()) != "" {
@@ -298,7 +331,7 @@ func SyncTelegramChannelFromSettings() {
 		"system.telegram_abnormal_notice_enabled",
 	}
 	var rows []mdb.Setting
-	if err := Mdb.Where("key IN ?", keys).Find(&rows).Error; err != nil {
+	if err := Mdb.Where("`key` IN ?", keys).Find(&rows).Error; err != nil {
 		color.Red.Printf("[store_db] sync telegram channel: read settings err=%s\n", err)
 		return
 	}

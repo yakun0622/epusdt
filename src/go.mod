@@ -3,11 +3,13 @@ module github.com/GMWalletApp/epusdt
 go 1.25.0
 
 require (
-	github.com/btcsuite/btcutil v1.0.2
+	github.com/GMWalletApp/ChainScanner v0.0.0
 	github.com/dromara/carbon/v2 v2.6.15
 	github.com/ethereum/go-ethereum v1.15.11
 	github.com/gagliardetto/solana-go v1.16.0
 	github.com/go-resty/resty/v2 v2.11.0
+	github.com/go-sql-driver/mysql v1.7.0
+	github.com/gofrs/flock v0.8.1
 	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/gookit/color v1.5.0
 	github.com/gookit/goutil v0.4.6
@@ -16,7 +18,6 @@ require (
 	github.com/labstack/echo/v4 v4.6.0
 	github.com/libtnb/sqlite v1.0.1
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/satori/go.uuid v1.2.0
 	github.com/shengdoushi/base58 v1.0.0
 	github.com/shopspring/decimal v1.3.1
@@ -25,13 +26,30 @@ require (
 	github.com/tidwall/gjson v1.18.0
 	github.com/xssnick/tonutils-go v1.16.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/crypto v0.48.0
-	golang.org/x/sync v0.19.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/sync v0.22.0
+	google.golang.org/grpc v1.83.2
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/telebot.v3 v3.0.0
 	gorm.io/driver/mysql v1.5.1
-	gorm.io/driver/postgres v1.5.2
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
+)
+
+require (
+	github.com/block-vision/sui-go-sdk v1.3.1 // indirect
+	github.com/btcsuite/btcd v0.24.2 // indirect
+	github.com/btcsuite/btcd/btcec/v2 v2.3.4 // indirect
+	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
+	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
+	github.com/btcsuite/btcutil v1.0.2 // indirect
+	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
+	github.com/fbsobreira/gotron-sdk v0.24.0 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/rpcpool/yellowstone-grpc/examples/golang v0.0.0-20261118123819-b9a4f56a43a1 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )
 
 require (
@@ -47,7 +65,7 @@ require (
 	github.com/crate-crypto/go-ipa v0.0.0-20240724233137-53bbb0ceb27a // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.0 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
@@ -56,17 +74,13 @@ require (
 	github.com/gagliardetto/binary v0.8.0 // indirect
 	github.com/gagliardetto/treeout v0.1.4 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-sql-driver/mysql v1.7.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gookit/filter v1.1.2 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/gorilla/websocket v1.5.3
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
-	github.com/jackc/pgx/v5 v5.3.1 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -103,10 +117,10 @@ require (
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
 	go.mongodb.org/mongo-driver v1.17.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/term v0.40.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.70.0 // indirect
@@ -115,3 +129,5 @@ require (
 	modernc.org/sqlite v1.47.0 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/GMWalletApp/ChainScanner => ../chainscanner

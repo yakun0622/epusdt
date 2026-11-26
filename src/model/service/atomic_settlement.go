@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GMWalletApp/epusdt/internal/diagnostics"
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
@@ -26,30 +27,36 @@ func settlementTxID(network, provider, transaction string) string {
 	if provider != "" && provider != mdb.PaymentProviderOnChain {
 		return transaction
 	}
-	if !manualBlockTransactionIDIsHex(network) {return transaction}
+	if !manualBlockTransactionIDIsHex(network) {
+		return transaction
+	}
 	body := strings.TrimPrefix(strings.TrimPrefix(transaction, "0x"), "0X")
 	// Only normalize genuinely hexadecimal identifiers. Historical tests
 	// and records can contain opaque provider/scanner references; inventing
 	// a 0x prefix for an arbitrary string would change its identity.
 	if len(body) == 64 {
 		if _, err := hex.DecodeString(body); err == nil {
-			if strings.EqualFold(network,mdb.NetworkTron) {return strings.ToLower(body)}
+			if strings.EqualFold(network, mdb.NetworkTron) {
+				return strings.ToLower(body)
+			}
 			return "0x" + strings.ToLower(body)
 		}
 	}
 	// Aptos (and EVM) can have short RPC test IDs with an explicit 0x
 	// prefix; preserve that prefix and its canonical lowercase spelling.
-	if !strings.EqualFold(network,mdb.NetworkTron) &&
-		(strings.HasPrefix(transaction,"0x") || strings.HasPrefix(transaction,"0X")) {
+	if !strings.EqualFold(network, mdb.NetworkTron) &&
+		(strings.HasPrefix(transaction, "0x") || strings.HasPrefix(transaction, "0X")) {
 		return "0x" + strings.ToLower(body)
 	}
 	return transaction
 }
 
 func settlementClaimKey(network, provider, transaction string) string {
-	if provider == "" { provider = mdb.PaymentProviderOnChain }
-	scope := strings.ToLower(strings.TrimSpace(provider))+":"+strings.ToLower(strings.TrimSpace(network))
-	sum := sha256.Sum256([]byte(scope+"\x00"+settlementTxID(network,provider,transaction)))
+	if provider == "" {
+		provider = mdb.PaymentProviderOnChain
+	}
+	scope := strings.ToLower(strings.TrimSpace(provider)) + ":" + strings.ToLower(strings.TrimSpace(network))
+	sum := sha256.Sum256([]byte(scope + "\x00" + settlementTxID(network, provider, transaction)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -58,52 +65,68 @@ func settlementClaimKey(network, provider, transaction string) string {
 // either input to the exact persisted order, preventing stale address/token
 // or amount from settling a different order under a concurrent network switch.
 func matchingSettlementTarget(order *mdb.Orders, req *request.OrderProcessingRequest) bool {
-	if order == nil || req == nil { return false }
-	if !strings.EqualFold(strings.TrimSpace(order.Network),strings.TrimSpace(req.Network)) ||
-		!strings.EqualFold(strings.TrimSpace(order.Token),strings.TrimSpace(req.Token)) ||
-		normalizeOrderAddressByNetwork(order.Network,order.ReceiveAddress) !=
-		normalizeOrderAddressByNetwork(req.Network,req.ReceiveAddress) {
+	if order == nil || req == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(order.Network), strings.TrimSpace(req.Network)) ||
+		!strings.EqualFold(strings.TrimSpace(order.Token), strings.TrimSpace(req.Token)) ||
+		normalizeOrderAddressByNetwork(order.Network, order.ReceiveAddress) !=
+			normalizeOrderAddressByNetwork(req.Network, req.ReceiveAddress) {
 		return false
 	}
 	return order.ActualAmount > 0 && req.Amount > 0 &&
 		decimal.NewFromFloat(order.ActualAmount).Equal(decimal.NewFromFloat(req.Amount))
 }
 
-func lockSettlementOrder(tx *gorm.DB, tradeID string) (*mdb.Orders,error) {
+func lockSettlementOrder(tx *gorm.DB, tradeID string) (*mdb.Orders, error) {
 	var order mdb.Orders
-	err := tx.Clauses(clause.Locking{Strength:"UPDATE"}).
-		Where("trade_id = ?",tradeID).Take(&order).Error
-	if errors.Is(err,gorm.ErrRecordNotFound) {return nil,constant.OrderStatusConflict}
-	if err != nil {return nil,err}
-	return &order,nil
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("trade_id = ?", tradeID).Take(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, constant.OrderStatusConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
 }
 
 // legacyTxAlreadyUsed protects historical orders created before W54. Claims
 // protect new writes. Keep lookup in the same transaction and normalize hex
 // aliases to defeat case/prefix replays even with a case-sensitive DB collation.
-func legacyTxAlreadyUsed(tx *gorm.DB, order *mdb.Orders, canonical string) (bool,error) {
+func legacyTxAlreadyUsed(tx *gorm.DB, order *mdb.Orders, canonical string) (bool, error) {
 	var n int64
-	candidates := equivalentManualBlockTransactionIDs(order.Network,canonical)
+	candidates := equivalentManualBlockTransactionIDs(order.Network, canonical)
 	// Historical paid orders may have been soft-deleted by an admin.
 	// Never allow their transaction IDs to be claimed a second time.
 	q := tx.Unscoped().Model(&mdb.Orders{}).Where("block_transaction_id != ''")
+	blockID := "block_transaction_id"
+	// MySQL's default text collation is case-insensitive. Solana, TON and
+	// provider identifiers are opaque, so their spelling must remain exact.
+	if tx.Dialector.Name() == "mysql" {
+		blockID = "BINARY " + blockID
+	}
 	if order.PayProvider == "" || order.PayProvider == mdb.PaymentProviderOnChain {
-		q = q.Where("(pay_provider = ? OR pay_provider = '' OR pay_provider IS NULL)",mdb.PaymentProviderOnChain)
+		q = q.Where("(pay_provider = ? OR pay_provider = '' OR pay_provider IS NULL)", mdb.PaymentProviderOnChain)
 		if manualBlockTransactionIDIsHex(order.Network) {
-			q = q.Where("LOWER(block_transaction_id) IN ?",lowerSettlementCandidates(candidates))
+			q = q.Where("LOWER(block_transaction_id) IN ?", lowerSettlementCandidates(candidates))
 		} else {
-			q = q.Where("block_transaction_id IN ?",candidates)
+			q = q.Where(blockID+" IN ?", candidates)
 		}
 	} else {
-		q = q.Where("pay_provider = ? AND block_transaction_id = ?",order.PayProvider,canonical)
+		q = q.Where("pay_provider = ? AND "+blockID+" = ?", order.PayProvider, canonical)
 	}
-	if err := q.Count(&n).Error; err != nil {return false,err}
-	return n>0,nil
+	if err := q.Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func lowerSettlementCandidates(ids []string) []string {
-	out:=make([]string,0,len(ids))
-	for _,id:=range ids {out=append(out,strings.ToLower(id))}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, strings.ToLower(id))
+	}
 	return out
 }
 
@@ -112,156 +135,230 @@ func lowerSettlementCandidates(ids []string) []string {
 // serialize on the parent FOR UPDATE lock (MySQL/Postgres). The unique
 // claim_key handles cross-process replay and collision across instances.
 func settleOrderAtomically(req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
-	return settleOrderAtomicallyOnDB(dao.Mdb,req,opts)
+	return settleOrderAtomicallyOnDB(dao.Mdb, req, opts)
 }
 
 // settleOrderAtomicallyOnDB allows integration tests to use two independent
 // MySQL pools (simulating separate Go processes) against the SAME primary DB.
-func settleOrderAtomicallyOnDB(db *gorm.DB,req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
-	if req == nil || strings.TrimSpace(req.TradeId)=="" ||
-		strings.TrimSpace(req.BlockTransactionId)=="" {return constant.ParamsMarshalErr}
+func settleOrderAtomicallyOnDB(db *gorm.DB, req *request.OrderProcessingRequest, opts orderProcessingOptions) error {
+	if req == nil || strings.TrimSpace(req.TradeId) == "" ||
+		strings.TrimSpace(req.BlockTransactionId) == "" {
+		return constant.ParamsMarshalErr
+	}
 	var unlockOrders []mdb.Orders
+	var paidEvent diagnostics.Event
 	// Fail closed on database lock contention or a stalled transaction.
 	// On deadline/commit uncertainty, unique claims and SQL order state
 	// decide idempotency; never issue another settlement automatically.
-	ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Resolve the parent identity before locking, then lock parent first
 		// to use a consistent lock order with competing child settlements.
 		var preliminary mdb.Orders
-		if err:=tx.Where("trade_id = ?",req.TradeId).Take(&preliminary).Error;err!=nil {
-			if errors.Is(err,gorm.ErrRecordNotFound) {return constant.OrderStatusConflict}
+		if err := tx.Where("trade_id = ?", req.TradeId).Take(&preliminary).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return constant.OrderStatusConflict
+			}
 			return err
 		}
-		rootID:=preliminary.TradeId
-		if preliminary.ParentTradeId!="" {rootID=preliminary.ParentTradeId}
-		root,err:=lockSettlementOrder(tx,rootID)
-		if err!=nil{return err}
-		order:=root
-		if preliminary.ParentTradeId!="" {
-			order,err=lockSettlementOrder(tx,req.TradeId)
-			if err!=nil{return err}
-			if order.ParentTradeId!=root.TradeId {return constant.OrderStatusConflict}
+		rootID := preliminary.TradeId
+		if preliminary.ParentTradeId != "" {
+			rootID = preliminary.ParentTradeId
 		}
-		if !manualPaymentStatusAllowed(order.Status,opts.allowedStatuses) ||
-			!manualPaymentStatusAllowed(root.Status,opts.parentAllowedStatuses) {
+		root, err := lockSettlementOrder(tx, rootID)
+		if err != nil {
+			return err
+		}
+		order := root
+		if preliminary.ParentTradeId != "" {
+			order, err = lockSettlementOrder(tx, req.TradeId)
+			if err != nil {
+				return err
+			}
+			if order.ParentTradeId != root.TradeId {
+				return constant.OrderStatusConflict
+			}
+		}
+		if !manualPaymentStatusAllowed(order.Status, opts.allowedStatuses) ||
+			!manualPaymentStatusAllowed(root.Status, opts.parentAllowedStatuses) {
 			// Already-settled records never trigger callback again.
-			if order.Status==mdb.StatusPaySuccess &&
-				settlementTxID(order.Network,order.PayProvider,order.BlockTransactionId)==
-				settlementTxID(order.Network,order.PayProvider,req.BlockTransactionId) {
+			if order.Status == mdb.StatusPaySuccess &&
+				settlementTxID(order.Network, order.PayProvider, order.BlockTransactionId) ==
+					settlementTxID(order.Network, order.PayProvider, req.BlockTransactionId) {
 				return constant.OrderBlockAlreadyProcess
 			}
 			return constant.OrderStatusConflict
 		}
-		if !matchingSettlementTarget(order,req) {return constant.OrderStatusConflict}
+		if !matchingSettlementTarget(order, req) {
+			return constant.OrderStatusConflict
+		}
 		// Legacy half-settled children are not automatically repaired.
 		// Do not settle the parent again under a different transaction
 		// while a paid child already exists without an attributed parent.
-		if root.PayBySubId!=0 {return constant.OrderStatusConflict}
+		if root.PayBySubId != 0 {
+			return constant.OrderStatusConflict
+		}
 		var previouslyPaidChildren int64
-		if err:=tx.Model(&mdb.Orders{}).Where("parent_trade_id = ? AND status = ?",
-			root.TradeId,mdb.StatusPaySuccess).Count(&previouslyPaidChildren).Error;err!=nil {return err}
-		if previouslyPaidChildren>0 {return constant.OrderStatusConflict}
-		canonical:=settlementTxID(order.Network,order.PayProvider,req.BlockTransactionId)
-		if canonical=="" {return constant.ParamsMarshalErr}
+		if err := tx.Model(&mdb.Orders{}).Where("parent_trade_id = ? AND status = ?",
+			root.TradeId, mdb.StatusPaySuccess).Count(&previouslyPaidChildren).Error; err != nil {
+			return err
+		}
+		if previouslyPaidChildren > 0 {
+			return constant.OrderStatusConflict
+		}
+		canonical := settlementTxID(order.Network, order.PayProvider, req.BlockTransactionId)
+		if canonical == "" {
+			return constant.ParamsMarshalErr
+		}
 		// A legacy row could already own the transaction, including the
 		// same order (replay). Never swallow or mark unrelated callbacks.
-		used,err:=legacyTxAlreadyUsed(tx,order,canonical)
-		if err!=nil{return err}
-		if used{return constant.OrderBlockAlreadyProcess}
-		claim:=&mdb.PaymentTxClaim{ClaimKey:settlementClaimKey(order.Network,order.PayProvider,canonical),
-			TradeID:order.TradeId,Network:strings.ToLower(order.Network),
-			Provider:order.PayProvider,TransactionID:canonical}
-		result:=tx.Clauses(clause.OnConflict{DoNothing:true}).Create(claim)
-		if result.Error!=nil {return result.Error}
-		if result.RowsAffected!=1 {return constant.OrderBlockAlreadyProcess}
+		used, err := legacyTxAlreadyUsed(tx, order, canonical)
+		if err != nil {
+			return err
+		}
+		if used {
+			return constant.OrderBlockAlreadyProcess
+		}
+		claim := &mdb.PaymentTxClaim{ClaimKey: settlementClaimKey(order.Network, order.PayProvider, canonical),
+			TradeID: order.TradeId, Network: strings.ToLower(order.Network),
+			Provider: order.PayProvider, TransactionID: canonical}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(claim)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return constant.OrderBlockAlreadyProcess
+		}
 		// MySQL can report a matched row for ON DUPLICATE KEY NOOP
 		// depending on DSN clientFoundRows. Read back the claimant to
 		// reject a conflicting owner even if RowsAffected looked positive.
 		var claimant mdb.PaymentTxClaim
-		if err:=tx.Where("claim_key = ?",claim.ClaimKey).Take(&claimant).Error;err!=nil{return err}
-		if claimant.TradeID!=order.TradeId {return constant.OrderBlockAlreadyProcess}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("claim_key = ?", claim.ClaimKey).Take(&claimant).Error; err != nil {
+			return err
+		}
+		if claimant.TradeID != order.TradeId {
+			return constant.OrderBlockAlreadyProcess
+		}
 
 		// Ensure callback ownership is decided in this transaction, not
 		// repaired later by a separate read/update.
-		callback:=mdb.CallBackConfirmNo
-		if order.ParentTradeId!="" {callback=mdb.CallBackConfirmOk}
-		paid:=tx.Model(&mdb.Orders{}).Where("id = ? AND status IN ?",
-			order.ID,opts.allowedStatuses).Updates(map[string]interface{}{
-				"status":mdb.StatusPaySuccess,
-				"block_transaction_id":canonical,
-				"callback_confirm":callback,
-			})
-		if paid.Error!=nil {return paid.Error}
-		if paid.RowsAffected!=1{return constant.OrderStatusConflict}
+		callback := mdb.CallBackConfirmNo
+		if order.ParentTradeId != "" {
+			callback = mdb.CallBackConfirmOk
+		}
+		paid := tx.Model(&mdb.Orders{}).Where("id = ? AND status IN ?",
+			order.ID, opts.allowedStatuses).Updates(map[string]interface{}{
+			"status":                  mdb.StatusPaySuccess,
+			"block_transaction_id":    canonical,
+			"settlement_key":          claim.ClaimKey,
+			"review_transaction_hash": "",
+			"callback_confirm":        callback,
+		})
+		if paid.Error != nil {
+			return paid.Error
+		}
+		if paid.RowsAffected != 1 {
+			return constant.OrderStatusConflict
+		}
 
 		// The parent and all its other children must be finalized before
 		// the claim is committed. A rollback leaves ALL records unchanged.
-		if order.ParentTradeId!="" {
-			parent:=tx.Model(&mdb.Orders{}).
-				Where("id = ? AND status IN ? AND pay_by_sub_id = 0",root.ID,opts.parentAllowedStatuses).
+		if order.ParentTradeId != "" {
+			parent := tx.Model(&mdb.Orders{}).
+				Where("id = ? AND status IN ? AND pay_by_sub_id = 0", root.ID, opts.parentAllowedStatuses).
 				Updates(map[string]interface{}{
-					"status":mdb.StatusPaySuccess,
-					"callback_confirm":mdb.CallBackConfirmNo,
-					"pay_by_sub_id":order.ID,
+					"status":                  mdb.StatusPaySuccess,
+					"callback_confirm":        mdb.CallBackConfirmNo,
+					"review_transaction_hash": "",
+					"pay_by_sub_id":           order.ID,
 				})
-			if parent.Error!=nil{return parent.Error}
-			if parent.RowsAffected!=1{return constant.OrderStatusConflict}
+			if parent.Error != nil {
+				return parent.Error
+			}
+			if parent.RowsAffected != 1 {
+				return constant.OrderStatusConflict
+			}
 		}
+		siblingStatuses := []int{mdb.StatusWaitPay, mdb.StatusConfirming}
+		siblingsQuery := tx.Model(&mdb.Orders{}).
+			Where("parent_trade_id = ? AND id <> ? AND status IN ?", root.TradeId, order.ID, siblingStatuses).
+			Session(&gorm.Session{})
 		var siblings []mdb.Orders
-		if err:=tx.Where("parent_trade_id = ? AND trade_id != ? AND status = ?",
-			root.TradeId,order.TradeId,mdb.StatusWaitPay).Find(&siblings).Error;err!=nil{return err}
-		if order.ParentTradeId=="" {
-			if err:=tx.Where("parent_trade_id = ? AND status = ?",root.TradeId,mdb.StatusWaitPay).
-				Find(&siblings).Error;err!=nil{return err}
+		if err := siblingsQuery.Clauses(clause.Locking{Strength: "UPDATE"}).Find(&siblings).Error; err != nil {
+			return err
 		}
-		if len(siblings)>0 {
-			if err:=tx.Model(&mdb.Orders{}).Where("parent_trade_id = ? AND status = ? AND id != ?",
-				root.TradeId,mdb.StatusWaitPay,order.ID).
-				Update("status",mdb.StatusExpired).Error;err!=nil{return err}
-			for _,s:=range siblings {
-				if s.PayProvider!=""&&s.PayProvider!=mdb.PaymentProviderOnChain {
-					if err:=tx.Model(&mdb.ProviderOrder{}).
-						Where("trade_id = ? AND provider = ? AND status IN ?",s.TradeId,s.PayProvider,
-							[]string{mdb.ProviderOrderStatusCreating,mdb.ProviderOrderStatusPending}).
-						Update("status",mdb.ProviderOrderStatusExpired).Error;err!=nil{return err}
+		if len(siblings) > 0 {
+			if err := siblingsQuery.Updates(map[string]any{"status": mdb.StatusExpired, "is_selected": false}).Error; err != nil {
+				return err
+			}
+			for _, s := range siblings {
+				if s.PayProvider != "" && s.PayProvider != mdb.PaymentProviderOnChain {
+					if err := tx.Model(&mdb.ProviderOrder{}).
+						Where("trade_id = ? AND provider = ? AND status IN ?", s.TradeId, s.PayProvider,
+							[]string{mdb.ProviderOrderStatusCreating, mdb.ProviderOrderStatusPending}).
+						Update("status", mdb.ProviderOrderStatusExpired).Error; err != nil {
+						return err
+					}
 				}
 			}
 		}
-		// Provider payment ledger and SQL order must not diverge as a
-		// result of our own settlement. Verified OkPay callback is the
-		// only provider path into this function; no provider HTTP calls.
-		if order.PayProvider==mdb.PaymentProviderOkPay {
-			providerUpdates:=map[string]interface{}{"status":mdb.ProviderOrderStatusPaid}
-			if opts.providerNotifyRaw!="" {providerUpdates["notify_raw"]=opts.providerNotifyRaw}
-			provider:=tx.Model(&mdb.ProviderOrder{}).
-				Where("trade_id = ? AND provider = ? AND provider_order_id = ? AND status IN ?",
-					order.TradeId,mdb.PaymentProviderOkPay,req.BlockTransactionId,
-					[]string{mdb.ProviderOrderStatusPending,mdb.ProviderOrderStatusCreating}).
-				Updates(providerUpdates)
-			if provider.Error!=nil{return provider.Error}
-			if provider.RowsAffected!=1{return constant.OrderStatusConflict}
+		// Hosted payments must commit their verified provider record along
+		// with the paid order, claim, and callback ownership.
+		providerOrderID := opts.providerOrderID
+		if order.PayProvider == mdb.PaymentProviderOkPay {
+			providerOrderID = req.BlockTransactionId
 		}
-		unlockOrders=append(unlockOrders,*order)
-		if order.ParentTradeId!="" {unlockOrders=append(unlockOrders,*root)}
-		unlockOrders=append(unlockOrders,siblings...)
+		if order.PayProvider == mdb.PaymentProviderOkPay || order.PayProvider == mdb.PaymentProviderXLayer {
+			if providerOrderID == "" {
+				return constant.OrderStatusConflict
+			}
+			providerUpdates := map[string]interface{}{"status": mdb.ProviderOrderStatusPaid}
+			if opts.providerNotifyRaw != "" {
+				providerUpdates["notify_raw"] = opts.providerNotifyRaw
+			}
+			provider := tx.Model(&mdb.ProviderOrder{}).
+				Where("trade_id = ? AND provider = ? AND provider_order_id = ? AND status IN ?",
+					order.TradeId, order.PayProvider, providerOrderID,
+					[]string{mdb.ProviderOrderStatusPending, mdb.ProviderOrderStatusCreating}).
+				Updates(providerUpdates)
+			if provider.Error != nil {
+				return provider.Error
+			}
+			if provider.RowsAffected != 1 {
+				return constant.OrderStatusConflict
+			}
+		}
+		paidEvent = diagnostics.Event{
+			Event: "order.settle", Outcome: "paid", Trade: order.TradeId, Parent: order.ParentTradeId,
+			MerchantOrder: root.OrderId, Order: order.ID, Hash: canonical, Network: order.Network,
+			Token: order.Token, Amount: order.ActualAmount, Status: mdb.StatusPaySuccess,
+		}
+		unlockOrders = append(unlockOrders, *order)
+		if order.ParentTradeId != "" {
+			unlockOrders = append(unlockOrders, *root)
+		}
+		unlockOrders = append(unlockOrders, siblings...)
 		return nil
 	})
-	if err!=nil{return err}
+	if err != nil {
+		return err
+	}
+	diagnostics.Record(paidEvent)
 	// Runtime SQLite locks are advisory and live in a separate DB; clean up
 	// after the authoritative primary commit, never while it is uncommitted.
 	// If cleanup fails, the order is already paid and the retry sweep must
 	// reclaim locks without emitting another notification.
-	for i:=range unlockOrders {
-		item:=&unlockOrders[i]
-		if !hasTransactionLock(item) {continue}
+	for i := range unlockOrders {
+		item := &unlockOrders[i]
+		if !hasTransactionLock(item) {
+			continue
+		}
 		// Delete by trade ID, never by address/amount: a delayed cleanup
 		// must not remove a newer order's reallocated amount lock.
-		if err:=data.UnLockTransactionByTradeId(item.TradeId);err!=nil {
-			log.Sugar.Warnf("[order] committed payment lock cleanup pending, trade_id=%s: %v",item.TradeId,err)
+		if err := data.UnLockTransactionByTradeId(item.TradeId); err != nil {
+			log.Sugar.Warnf("[order] committed payment lock cleanup pending, trade_id=%s: %v", item.TradeId, err)
 		}
 	}
 	return nil
 }
-

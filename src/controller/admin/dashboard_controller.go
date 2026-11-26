@@ -496,7 +496,7 @@ func (c *BaseAdminController) RecentOrders(ctx echo.Context) error {
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
-	return c.SucJson(ctx, rows)
+	return c.SucJson(ctx, newAdminOrders(rows))
 }
 
 // parseRange maps the ?range=... shorthand to a concrete [start, end].
@@ -516,12 +516,12 @@ func parseRange(ctx echo.Context) (time.Time, time.Time) {
 		end := now
 		if s := ctx.QueryParam("start_at"); s != "" {
 			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-				start = time.Unix(n, 0)
+				start = time.Unix(n, 0).In(time.Local)
 			}
 		}
 		if s := ctx.QueryParam("end_at"); s != "" {
 			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-				end = time.Unix(n, 0)
+				end = time.Unix(n, 0).In(time.Local)
 			}
 		}
 		return start, end

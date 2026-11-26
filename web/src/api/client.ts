@@ -58,6 +58,18 @@ export function createApiClient(config: ClientConfig) {
     return envelope.data;
   };
 
+  // ChainScanner admin endpoints return plain JSON and use HTTP status codes.
+  const rawJson = async <T>(path: string, options: JsonOptions = {}): Promise<T | null> => {
+    const response = await request(path, options);
+    if (!response.ok) throw new ApiError('ChainScanner 请求失败', response.status);
+    if (response.status === 204) return null;
+    try {
+      return await response.json() as T;
+    } catch {
+      throw new ApiError('服务器返回的内容不是预期 JSON', response.status);
+    }
+  };
+
   const postJson = <T>(path: string, body: unknown, method: 'POST'|'PUT'|'PATCH' = 'POST') =>
     json<T>(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -79,5 +91,5 @@ export function createApiClient(config: ClientConfig) {
       throw new ApiError('服务器未返回 CSV 文件', response.status);
     return response.blob();
   };
-  return { json, postJson, download };
+  return { json, postJson, rawJson, download };
 }

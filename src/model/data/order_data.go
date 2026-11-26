@@ -1,14 +1,18 @@
 package data
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
 
+	"github.com/GMWalletApp/epusdt/config"
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/GMWalletApp/epusdt/model/request"
 	addressutil "github.com/GMWalletApp/epusdt/util/address"
+	"github.com/GMWalletApp/epusdt/util/constant"
 	"github.com/dromara/carbon/v2"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -49,7 +53,7 @@ func normalizeLockAddress(network, address string) string {
 			return raw
 		}
 	}
-	if network == mdb.NetworkAptos {
+	if network == mdb.NetworkAptos || network == mdb.NetworkSui {
 		if normalized, err := addressutil.NormalizeMoveAddress(address); err == nil {
 			return normalized
 		}
@@ -83,7 +87,7 @@ func activeLocksForAddress(tx *gorm.DB, network, address, token string, now time
 	query := tx.Model(&mdb.TransactionLock{}).
 		Where("network = ?", normalizeLockNetwork(network)).
 		Where("token = ?", normalizeLockToken(token)).
-		Where("expires_at > ?", now)
+		Where(SQLiteTimestampUTCExpr("expires_at")+" > ?", orderTimeUTC(now))
 	return applyLockAddressFilter(query, network, address)
 }
 
@@ -117,8 +121,55 @@ func GetOrderInfoByTradeId(tradeId string) (*mdb.Orders, error) {
 	return order, err
 }
 
+// SQLiteTimestampUTCExpr converts the timestamp text emitted by both the old
+// local-time writer and the current UTC writer into a comparable UTC value.
+// Older rows can contain Go's "... -0500 EST" suffix (or space-separated
+// "... -05:00"), which SQLite cannot parse directly; rebuild the offset as
+// RFC3339 before calling datetime().
+func SQLiteTimestampUTCExpr(column string) string {
+	plusPos := "instr(" + column + ", ' +')"
+	minusPos := "instr(" + column + ", ' -')"
+	formatOffset := func(pos string) string {
+		return "CASE WHEN substr(" + column + ", " + pos + " + 4, 1) = ':' " +
+			"THEN datetime(substr(" + column + ", 1, 19) || substr(" + column + ", " + pos + " + 1, 6)) " +
+			"ELSE datetime(substr(" + column + ", 1, 19) || substr(" + column + ", " + pos + " + 1, 3) || ':' || substr(" + column + ", " + pos + " + 4, 2)) END"
+	}
+	return "CASE " +
+		"WHEN " + plusPos + " > 0 THEN " + formatOffset(plusPos) + " " +
+		"WHEN " + minusPos + " > 0 THEN " + formatOffset(minusPos) + " " +
+		"ELSE datetime(" + column + ") END"
+}
+
+// PrimaryTimestampExpr normalizes historical SQLite text. Native MySQL
+// datetime columns can be used directly with a typed time bound.
+func PrimaryTimestampExpr(column string) string {
+	if dao.Mdb.Dialector.Name() == "mysql" {
+		return column
+	}
+	return SQLiteTimestampUTCExpr(column)
+}
+
+func PrimaryTimestampBound(t time.Time) any {
+	if dao.Mdb.Dialector.Name() == "mysql" {
+		return t
+	}
+	return orderTimeUTC(t)
+}
+
+// orderTimeUTC formats a bound consistently with SQLiteTimestampUTCExpr.
+// Passing time.Time directly to SQLite can produce Go's " +0000 UTC" text,
+// which SQLite's datetime() does not parse.
+func orderTimeUTC(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
 // CreateOrderWithTransaction creates an order in the active database transaction.
 func CreateOrderWithTransaction(tx *gorm.DB, order *mdb.Orders) error {
+	// A zero carbon.Time is a nil *Carbon, whose IsZero reports false.
+	// Check IsNil as well, otherwise GORM fills the column with local time.
+	if order.CreatedAt.IsNil() || order.CreatedAt.IsZero() {
+		order.CreatedAt = *carbon.NewTime(carbon.Now(carbon.UTC))
+	}
 	return tx.Model(order).Create(order).Error
 }
 
@@ -190,13 +241,16 @@ func OrderSuccessWithStatusesWithTransaction(tx *gorm.DB, req *request.OrderProc
 	if len(allowedStatuses) == 0 {
 		return false, nil
 	}
+	key := sha256.Sum256([]byte(req.BlockTransactionId))
 	result := tx.Model(&mdb.Orders{}).
 		Where("trade_id = ?", req.TradeId).
 		Where("status IN ?", allowedStatuses).
 		Updates(map[string]interface{}{
-			"block_transaction_id": req.BlockTransactionId,
-			"status":               mdb.StatusPaySuccess,
-			"callback_confirm":     mdb.CallBackConfirmNo,
+			"review_transaction_hash": "",
+			"settlement_key":          hex.EncodeToString(key[:]),
+			"block_transaction_id":    req.BlockTransactionId,
+			"status":                  mdb.StatusPaySuccess,
+			"callback_confirm":        mdb.CallBackConfirmNo,
 		})
 	return result.RowsAffected > 0, result.Error
 }
@@ -204,19 +258,45 @@ func OrderSuccessWithStatusesWithTransaction(tx *gorm.DB, req *request.OrderProc
 // GetPendingCallbackOrders returns the minimal callback scheduling state.
 func GetPendingCallbackOrders(maxRetry int, limit int) ([]PendingCallbackOrder, error) {
 	var orders []PendingCallbackOrder
-	query := dao.Mdb.Model(&mdb.Orders{}).
-		Select("trade_id", "callback_num", "callback_confirm", "updated_at").
-		Where("callback_num <= ?", maxRetry).
-		Where("callback_confirm = ?", mdb.CallBackConfirmNo).
-		Where("status = ?", mdb.StatusPaySuccess).
-		Where("(parent_trade_id = ? OR parent_trade_id IS NULL)", "").
-		Where("NOT EXISTS (SELECT 1 FROM callback_delivery cd WHERE cd.trade_id = orders.trade_id AND (cd.delivered_at_ms > 0 OR cd.lease_until_ms > ?))", time.Now().UnixMilli()).
-		Order("updated_at asc")
+	query := pendingCallbackOrders(maxRetry, time.Now()).Order(PrimaryTimestampExpr("updated_at") + " asc")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	err := query.Find(&orders).Error
-	return orders, err
+	return orders, query.Find(&orders).Error
+}
+
+func pendingCallbackOrders(maxRetry int, now time.Time) *gorm.DB {
+	return dao.Mdb.Model(&mdb.Orders{}).
+		Select("trade_id", "callback_num", "callback_confirm", "updated_at").
+		Where("callback_num <= ? AND callback_confirm = ? AND status = ?", maxRetry, mdb.CallBackConfirmNo, mdb.StatusPaySuccess).
+		Where("(parent_trade_id = '' OR parent_trade_id IS NULL)").
+		Where("NOT EXISTS (SELECT 1 FROM callback_delivery cd WHERE cd.trade_id = orders.trade_id AND (cd.delivered_at_ms > 0 OR cd.lease_until_ms > ?))", now.UnixMilli())
+}
+
+// GetPendingCallbackOrdersDue filters before LIMIT so rows still in backoff
+// or leased by another worker cannot starve first attempts.
+func GetPendingCallbackOrdersDue(maxRetry int, limit int, now time.Time, retryBase, maxDelay time.Duration) ([]PendingCallbackOrder, error) {
+	if maxRetry < 0 {
+		return nil, nil
+	}
+	var orders []PendingCallbackOrder
+	query := pendingCallbackOrders(maxRetry, now)
+	updatedAt := PrimaryTimestampExpr("updated_at")
+	due := []string{"callback_num = 0"}
+	var args []any
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+		delay := callbackRetryDuration(attempt, retryBase)
+		if maxDelay > 0 && delay > maxDelay {
+			delay = maxDelay
+		}
+		due = append(due, "(callback_num = ? AND "+updatedAt+" <= ?)")
+		args = append(args, attempt, PrimaryTimestampBound(now.Add(-delay)))
+	}
+	query = query.Where("("+strings.Join(due, " OR ")+")", args...).Order(updatedAt + " asc")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	return orders, query.Find(&orders).Error
 }
 
 // SaveCallBackOrdersResp persists a callback attempt result.
@@ -232,10 +312,12 @@ func SaveCallBackOrdersResp(order *mdb.Orders) error {
 
 // UpdateOrderIsExpirationById expires an order only if it is still pending and already timed out.
 func UpdateOrderIsExpirationById(id uint64, expirationCutoff time.Time) (bool, error) {
+	// created_at is stored in UTC; normalize its text and the cutoff before
+	// comparing so mixed SQLite timestamp formats cannot expire fresh orders.
 	result := dao.Mdb.Model(mdb.Orders{}).
 		Where("id = ?", id).
 		Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusWaitSelect}).
-		Where("created_at <= ?", expirationCutoff).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(expirationCutoff)).
 		Update("status", mdb.StatusExpired)
 	return result.RowsAffected > 0, result.Error
 }
@@ -259,13 +341,29 @@ func CountSubOrders(parentTradeId string) (int64, error) {
 	return count, err
 }
 
-// GetSubOrderByTokenNetwork finds an existing active sub-order matching token+network under a parent.
+// GetSubOrderByTokenNetwork preserves the original on-chain lookup contract.
 func GetSubOrderByTokenNetwork(parentTradeId string, token string, network string) (*mdb.Orders, error) {
+	return GetSubOrderByTokenNetworkAndProvider(parentTradeId, token, network, mdb.PaymentProviderOnChain)
+}
+
+// GetSubOrderByTokenNetworkAndProvider finds an active sub-order matching
+// token+network and the requested payment provider under a parent. Empty
+// pay_provider is matched only for on-chain lookups so legacy rows created
+// before the explicit provider column remain compatible without leaking into
+// hosted provider queries.
+func GetSubOrderByTokenNetworkAndProvider(parentTradeId string, token string, network string, payProvider string) (*mdb.Orders, error) {
 	order := new(mdb.Orders)
-	err := dao.Mdb.Model(order).
+	query := dao.Mdb.Model(order).
 		Where("parent_trade_id = ?", parentTradeId).
 		Where("token = ?", token).
-		Where("network = ?", network).
+		Where("network = ?", network)
+	payProvider = strings.TrimSpace(payProvider)
+	if payProvider == "" || payProvider == mdb.PaymentProviderOnChain {
+		query = query.Where("(pay_provider = ? OR pay_provider = '')", mdb.PaymentProviderOnChain)
+	} else {
+		query = query.Where("pay_provider = ?", payProvider)
+	}
+	err := query.
 		Where("status = ?", mdb.StatusWaitPay).
 		Limit(1).
 		Find(order).Error
@@ -307,9 +405,10 @@ func MarkParentOrderSuccessWithStatusesWithTransaction(tx *gorm.DB, parentTradeI
 		Where("trade_id = ?", parentTradeId).
 		Where("status IN ?", allowedStatuses).
 		Updates(map[string]interface{}{
-			"status":           mdb.StatusPaySuccess,
-			"callback_confirm": mdb.CallBackConfirmNo,
-			"pay_by_sub_id":    sub.ID,
+			"status":                  mdb.StatusPaySuccess,
+			"callback_confirm":        mdb.CallBackConfirmNo,
+			"review_transaction_hash": "",
+			"pay_by_sub_id":           sub.ID,
 		})
 	return result.RowsAffected > 0, result.Error
 }
@@ -324,18 +423,63 @@ func ExpireSiblingSubOrdersWithTransaction(tx *gorm.DB, parentTradeId string, ex
 		Update("status", mdb.StatusExpired).Error
 }
 
-// MarkOrderSelected sets is_selected=true for the given trade_id.
-func MarkOrderSelected(tradeId string) error {
-	return dao.Mdb.Model(&mdb.Orders{}).
-		Where("trade_id = ?", tradeId).
-		Update("is_selected", true).Error
+// SelectCheckoutOrder selects one payable family member atomically. When refreshing
+// a reused on-chain child, both it and the parent must retain their reservations.
+// Hosted children's deadlines remain controlled by their external provider.
+func SelectCheckoutOrder(db *gorm.DB, rootID string, selected *mdb.Orders, renew bool) error {
+	var saved mdb.Orders
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if renew {
+			if err := RefreshOrderExpirationWithTransaction(tx, rootID); err != nil {
+				return err
+			}
+			if selected.TradeId != rootID && (selected.PayProvider == "" || selected.PayProvider == mdb.PaymentProviderOnChain) {
+				if err := RefreshOrderExpirationWithTransaction(tx, selected.TradeId); err != nil {
+					return err
+				}
+			}
+		}
+		result := tx.Model(&mdb.Orders{}).Where("trade_id = ? AND status = ?", selected.TradeId, mdb.StatusWaitPay).
+			Where("((trade_id = ? AND COALESCE(parent_trade_id, '') = '') OR parent_trade_id = ?)", rootID, rootID).
+			Update("is_selected", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return constant.OrderStatusConflict
+		}
+		if err := tx.Model(&mdb.Orders{}).Where("(trade_id = ? OR parent_trade_id = ?)", rootID, rootID).
+			Where("trade_id <> ? AND is_selected = ?", selected.TradeId, true).Update("is_selected", false).Error; err != nil {
+			return err
+		}
+		return tx.Where("trade_id = ?", selected.TradeId).Take(&saved).Error
+	})
+	if err == nil {
+		*selected = saved
+	}
+	return err
 }
 
-// CompleteWaitSelectOrder fills a placeholder order with concrete chain fields
+// SelectedCheckoutChild also handles older databases where both parent and child
+// could be flagged as selected. The next selection reconciles those flags.
+func SelectedCheckoutChild(rootID string) (*mdb.Orders, error) {
+	var child mdb.Orders
+	err := dao.Mdb.Where("parent_trade_id = ? AND is_selected = ?", rootID, true).
+		Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusConfirming, mdb.StatusManualReview}).
+		Order("id DESC").Limit(1).Find(&child).Error
+	return &child, err
+}
+
+// CompleteWaitSelectOrder turns a waiting placeholder into an on-chain order.
+func CompleteWaitSelectOrder(tradeID string, network string, token string, receiveAddress string, actualAmount float64) (bool, error) {
+	return CompleteWaitSelectOrderWithTransaction(dao.Mdb, tradeID, network, token, receiveAddress, actualAmount)
+}
+
+// CompleteWaitSelectOrderWithTransaction fills a placeholder order with concrete chain fields
 // and makes it payable. It only updates status=WaitSelect rows so concurrent
 // switch-network attempts cannot overwrite a payable order.
-func CompleteWaitSelectOrder(tradeID string, network string, token string, receiveAddress string, actualAmount float64) (bool, error) {
-	result := dao.Mdb.Model(&mdb.Orders{}).
+func CompleteWaitSelectOrderWithTransaction(tx *gorm.DB, tradeID string, network string, token string, receiveAddress string, actualAmount float64) (bool, error) {
+	result := tx.Model(&mdb.Orders{}).
 		Where("trade_id = ?", tradeID).
 		Where("status = ?", mdb.StatusWaitSelect).
 		Updates(map[string]interface{}{
@@ -345,7 +489,7 @@ func CompleteWaitSelectOrder(tradeID string, network string, token string, recei
 			"receive_address": receiveAddress,
 			"actual_amount":   actualAmount,
 			"is_selected":     false,
-			"created_at":      time.Now(),
+			"created_at":      time.Now().UTC(),
 		})
 	return result.RowsAffected > 0, result.Error
 }
@@ -365,23 +509,29 @@ func CompleteWaitSelectOkPayOrderWithTransaction(tx *gorm.DB, tradeID string, to
 			"actual_amount":   actualAmount,
 			"is_selected":     false,
 			"pay_provider":    mdb.PaymentProviderOkPay,
-			"created_at":      time.Now(),
+			"created_at":      time.Now().UTC(),
 		})
 	return result.RowsAffected > 0, result.Error
 }
 
-// MarkProviderSwitchParentSelectedWithTransaction marks a switch-network parent
-// as selected for a hosted payment provider. It intentionally does not fill
-// chain fields or create a transaction lock; the provider child order carries
-// the concrete payment target.
-func MarkProviderSwitchParentSelectedWithTransaction(tx *gorm.DB, tradeID string) (bool, error) {
+// CompleteWaitSelectXLayerOrderWithTransaction converts a placeholder parent
+// directly into an X Layer order. It intentionally does not create a local
+// chain lock because the provider owns the hosted payment target, and the
+// receive address stays empty so the cashier renders the hosted panel
+// (payment_url set, no address) instead of the on-chain address panel.
+func CompleteWaitSelectXLayerOrderWithTransaction(tx *gorm.DB, tradeID string, token string, actualAmount float64) (bool, error) {
 	result := tx.Model(&mdb.Orders{}).
 		Where("trade_id = ?", tradeID).
-		Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusWaitSelect}).
+		Where("status = ?", mdb.StatusWaitSelect).
 		Updates(map[string]interface{}{
-			"status":      mdb.StatusWaitPay,
-			"is_selected": true,
-			"created_at":  time.Now(),
+			"status":          mdb.StatusWaitPay,
+			"network":         mdb.PaymentProviderXLayer,
+			"token":           strings.ToUpper(strings.TrimSpace(token)),
+			"receive_address": "",
+			"actual_amount":   actualAmount,
+			"is_selected":     false,
+			"pay_provider":    mdb.PaymentProviderXLayer,
+			"created_at":      time.Now().UTC(),
 		})
 	return result.RowsAffected > 0, result.Error
 }
@@ -398,12 +548,93 @@ func ExpireOrderByTradeID(tradeId string) error {
 		}).Error
 }
 
-// RefreshOrderExpiration resets created_at to now so the expiration timer restarts.
-// Called on the parent order when a sub-order is created or returned.
+// RefreshOrderExpiration extends a pending order only after its reservation is renewed.
 func RefreshOrderExpiration(tradeId string) error {
-	return dao.Mdb.Model(&mdb.Orders{}).
-		Where("trade_id = ?", tradeId).
-		Update("created_at", time.Now()).Error
+	return dao.Mdb.Transaction(func(tx *gorm.DB) error {
+		return RefreshOrderExpirationWithTransaction(tx, tradeId)
+	})
+}
+
+func RefreshOrderExpirationWithTransaction(tx *gorm.DB, tradeID string) error {
+	updated, err := refreshOrderExpirationWithTransaction(tx, tradeID, map[string]interface{}{})
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return constant.OrderStatusConflict
+	}
+	return nil
+}
+
+func refreshOrderExpirationWithTransaction(tx *gorm.DB, tradeID string, updates map[string]interface{}) (bool, error) {
+	var order mdb.Orders
+	if err := tx.Where("trade_id = ?", tradeID).Limit(1).Find(&order).Error; err != nil {
+		return false, err
+	}
+	now := time.Now()
+	utcNow := now.UTC()
+	expiration := config.GetOrderExpirationTimeDuration()
+	if order.ID == 0 ||
+		(order.Status != mdb.StatusWaitPay && order.Status != mdb.StatusWaitSelect) ||
+		!order.CreatedAt.StdTime().Add(expiration).After(now) {
+		return false, nil
+	}
+
+	provider := strings.TrimSpace(order.PayProvider)
+	if order.Status == mdb.StatusWaitPay && (provider == "" || provider == mdb.PaymentProviderOnChain) {
+		// Commit the runtime extension first. If the main transaction fails,
+		// retaining a reservation too long is safer than exposing a payable target.
+		renewed, err := renewOrderTransactionLock(&order, now, now.Add(expiration))
+		if err != nil {
+			return false, err
+		}
+		if !renewed {
+			return false, nil
+		}
+	}
+
+	updates["created_at"] = utcNow
+	result := tx.Model(&mdb.Orders{}).
+		Where("trade_id = ?", tradeID).
+		Where("status = ?", order.Status).
+		Where(PrimaryTimestampExpr("created_at")+" > ?", PrimaryTimestampBound(utcNow.Add(-expiration))).
+		Updates(updates)
+	return result.RowsAffected > 0, result.Error
+}
+
+func ExtendOrderTransactionLock(order *mdb.Orders, expiresAt time.Time) error {
+	if order == nil || strings.TrimSpace(order.TradeId) == "" {
+		return nil
+	}
+	now := time.Now()
+	renewed, err := renewOrderTransactionLock(order, now, expiresAt)
+	if err != nil || renewed {
+		return err
+	}
+	err = LockTransaction(order.Network, order.ReceiveAddress, order.Token, order.TradeId, order.ActualAmount, expiresAt.Sub(now))
+	if errors.Is(err, ErrTransactionLocked) {
+		return nil
+	}
+	return err
+}
+
+func renewOrderTransactionLock(order *mdb.Orders, now, expiresAt time.Time) (bool, error) {
+	var locks []mdb.TransactionLock
+	if err := activeLocksForAddress(dao.RuntimeDB, order.Network, order.ReceiveAddress, order.Token, now).
+		Where("trade_id = ?", order.TradeId).Find(&locks).Error; err != nil {
+		return false, err
+	}
+	for _, lock := range locks {
+		// Keep the stored precision; changing settings must not change this target.
+		if !lockAmountDecimal(lock).Equal(decimal.NewFromFloat(order.ActualAmount)) {
+			continue
+		}
+		result := dao.RuntimeDB.Model(&mdb.TransactionLock{}).
+			Where("id = ? AND trade_id = ? AND "+SQLiteTimestampUTCExpr("expires_at")+" > ?", lock.ID, order.TradeId, orderTimeUTC(time.Now())).
+			Update("expires_at", gorm.Expr("CASE WHEN "+SQLiteTimestampUTCExpr("expires_at")+" < ? THEN ? ELSE expires_at END", expiresAt.UTC(), expiresAt.UTC()))
+		return result.RowsAffected > 0, result.Error
+	}
+	return false, nil
 }
 
 // ResetCallbackConfirmOk sets callback_confirm back to Ok.
@@ -450,14 +681,6 @@ func GetSubOrdersByParentTradeIds(parentTradeIds []string) ([]mdb.Orders, error)
 	return orders, err
 }
 
-// ExpireOrderByTradeId marks a single order as expired if still waiting.
-func ExpireOrderByTradeId(tradeId string) error {
-	return dao.Mdb.Model(&mdb.Orders{}).
-		Where("trade_id = ?", tradeId).
-		Where("status = ?", mdb.StatusWaitPay).
-		Update("status", mdb.StatusExpired).Error
-}
-
 // GetTradeIdByWalletAddressAndAmountAndToken resolves the reserved trade id by network, address, token and amount.
 func GetTradeIdByWalletAddressAndAmountAndToken(network string, address string, token string, amount float64) (string, error) {
 	network = normalizeLockNetwork(network)
@@ -491,8 +714,8 @@ func GetOnChainOrderByWalletAddressAndAmountAndTokenBeforeTime(network string, a
 		Where("network = ?", network).
 		Where("token = ?", token).
 		Where("actual_amount = ?", amount).
-		Where("created_at <= ?", before).
-		Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusExpired}).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(before)).
+		Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusExpired, mdb.StatusConfirming}).
 		Where("(pay_provider = ? OR pay_provider = '')", mdb.PaymentProviderOnChain)
 	query = applyOrderReceiveAddressFilter(query, network, address)
 	err := query.Order("created_at desc, id desc").Limit(1).Find(order).Error
@@ -521,7 +744,7 @@ func LockTransaction(network, address, token, tradeID string, amount float64, ex
 	return dao.RuntimeDB.Transaction(func(tx *gorm.DB) error {
 		expiredQuery := tx.Where("network = ?", network).
 			Where("token = ?", normalizedToken).
-			Where("expires_at <= ?", now)
+			Where(SQLiteTimestampUTCExpr("expires_at")+" <= ?", orderTimeUTC(now))
 		expiredQuery = applyLockAddressFilter(expiredQuery, network, address)
 		if err := expiredQuery.Delete(&mdb.TransactionLock{}).Error; err != nil {
 			return err
@@ -553,31 +776,12 @@ func LockTransaction(network, address, token, tradeID string, amount float64, ex
 	})
 }
 
-// UnLockTransaction releases the reservation for network+address+token+amount.
-func UnLockTransaction(network string, address string, token string, amount float64) error {
-	network = normalizeLockNetwork(network)
-	address = normalizeLockAddress(network, address)
-	var locks []mdb.TransactionLock
-	if err := activeLocksForAddress(dao.RuntimeDB, network, address, token, time.Now()).
-		Find(&locks).Error; err != nil {
-		return err
-	}
-	ids := make([]uint64, 0, len(locks))
-	for _, lock := range locks {
-		if lockMatchesAmount(lock, amount) {
-			ids = append(ids, lock.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-	return dao.RuntimeDB.Where("id IN ?", ids).Delete(&mdb.TransactionLock{}).Error
-}
-
+// UnLockTransactionByTradeId releases only reservations owned by this order,
+// including expired rows. Never release a reusable target without its owner.
 func UnLockTransactionByTradeId(tradeID string) error {
 	return dao.RuntimeDB.Where("trade_id = ?", tradeID).Delete(&mdb.TransactionLock{}).Error
 }
 
 func CleanupExpiredTransactionLocks() error {
-	return dao.RuntimeDB.Where("expires_at <= ?", time.Now()).Delete(&mdb.TransactionLock{}).Error
+	return dao.RuntimeDB.Where(SQLiteTimestampUTCExpr("expires_at")+" <= ?", orderTimeUTC(time.Now())).Delete(&mdb.TransactionLock{}).Error
 }

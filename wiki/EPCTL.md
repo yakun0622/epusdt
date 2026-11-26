@@ -1,5 +1,7 @@
 # epctl 安装与验证脚本
 
+[文档目录](README.zh_CN.md) · [English](EPCTL.en.md)
+
 `epctl` 是仓库顶层的 Linux 二进制安装管理脚本，面向已经发布到 GitHub Releases 的 `epusdt` 二进制包。
 `epctl-docker-test.sh` 是配套的真实验收脚本，用本机 Docker 启动 Ubuntu + systemd 容器，完整验证安装、启动、升级和初始化密码流程。
 
@@ -33,11 +35,13 @@
 |------|------|
 | 安装目录 | `/opt/epusdt` |
 | 主程序 | `/opt/epusdt/epusdt` |
+| 扫链程序 | `/opt/epusdt/chainscanner` |
 | 配置文件 | `/opt/epusdt/.env` |
+| 扫链配置 | `/opt/epusdt/chainscanner.json` |
 | 示例配置 | `/opt/epusdt/.env.example` |
 | 前端释放目录 | `/opt/epusdt/www` |
 | 下载缓存 | `/tmp/epusdt/<tag>/` |
-| systemd unit | `/etc/systemd/system/epusdt.service` |
+| systemd unit | `/etc/systemd/system/epusdt.service`、`/etc/systemd/system/chainscanner.service` |
 | epctl 全局安装位置 | `/usr/local/bin/epctl` |
 
 ## 快速开始
@@ -69,24 +73,44 @@ epctl
 下载指定版本：
 
 ```bash
-./epctl download --tag v1.0.8
+./epctl download --tag v2.1.0
 ```
 
-安装服务：
+安装服务（默认 `--component epusdt`，直接使用内置扫描器；显式选择 `--component all` 可部署两个独立服务）：
 
 ```bash
-./epctl install --tag v1.0.8 \
+./epctl install --tag v2.1.0 \
   --app-uri https://pay.example.com \
   --listen 127.0.0.1:18000
 ```
 
-升级到新版本：
+分机/独立部署 `chainscanner`（自动生成或自定义 Token，并在终端打印连接凭证）：
 
 ```bash
-./epctl upgrade --tag v1.0.9
+./epctl install --component chainscanner \
+  --scanner-listen 0.0.0.0:9081
+```
+
+分机/独立部署 `epusdt`（对接远端 `chainscanner`）：
+
+```bash
+./epctl install --component epusdt \
+  --app-uri https://pay.example.com \
+  --listen 127.0.0.1:8000 \
+  --scanner-url http://10.0.0.2:9081 \
+  --scanner-token <chainscanner_token> \
+  --scanner-admin-token <chainscanner_admin_token>
+```
+
+升级到新版本（自动按当前已安装组件升级，也可通过 `--component all|epusdt|chainscanner` 指定）：
+
+```bash
+./epctl upgrade --tag v2.1.0
 ```
 
 直接执行 `./epctl upgrade --tag ...` 时，脚本会在文件替换完成后默认立即执行 `systemctl restart epusdt`。
+
+旧版 epctl 生成的 systemd 单元会把 EPUSDT 自身的可执行文件挂载为只读。使用新版 epctl 完成一次命令行升级并重启服务，即可刷新单元配置，后续可在后台安装二进制更新。自定义单元需要允许服务用户在程序所在目录创建备份并原子替换 EPUSDT 可执行文件。
 如果你只想替换文件而不重启，请显式传入 `--no-restart`。
 如果你希望人工确认，再传 `--prompt-restart`；交互终端下提示为 `[Y/n]`，直接回车默认重启。
 
@@ -175,7 +199,7 @@ Restart=always
 RestartSec=3
 ```
 
-`WorkingDirectory` 固定为 `/opt/epusdt`，因为程序会在二进制同级目录释放 `www/` 静态文件。
+`WorkingDirectory` 为 `/opt/epusdt`。网关直接从可执行文件提供前端资源。
 
 ## `init-password` 的含义
 
@@ -210,8 +234,8 @@ GET /admin/api/v1/auth/init-password
 示例：
 
 ```bash
-./epctl-docker-test.sh v1.0.6
-./epctl-docker-test.sh --lang zh v1.0.6 v1.0.8
+./epctl-docker-test.sh v2.1.0
+./epctl-docker-test.sh --lang zh v2.0.0 v2.1.0
 ```
 
 它会在本机：
@@ -222,7 +246,7 @@ GET /admin/api/v1/auth/init-password
 - 下载真实 GitHub Release
 - 安装 `epusdt`
 - 若传入 `upgrade-tag`，验证 `upgrade --no-restart`、默认 `upgrade`、以及 `upgrade --prompt-restart` 的 `n/回车` 分支
-- 检查 `systemd` 服务、`www/index.html`、配置文件、日志、状态输出
+- 检查 `systemd` 服务、前端 HTTP 响应、配置文件、日志、状态输出
 - 验证 `init-password` 首次成功、修改管理员密码后再次请求返回 `10040`
 
 运行前提：

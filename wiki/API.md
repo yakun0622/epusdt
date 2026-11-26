@@ -1,8 +1,14 @@
 # Epusdt API 文档
 
+[文档目录](README.zh_CN.md) · [English](API.en.md)
+
+[Python 创建订单示例](../sdk/python/gmpay_create_order.py) · [OpenAPI 规范](../src/docs/swagger.json)
+
 开发者可通过 Epusdt 提供的 HTTP API 将收款能力集成到业务系统。本文档以当前代码路由为准。
 
 > 旧版 `POST /api/v1/order/create-transaction` 已不再注册；创建订单请使用 `POST /payments/gmpay/v1/order/create-transaction`。
+
+[签名规则](#signing) · [创建 GMPay 交易](#create) · [查询支付状态](#status) · [商户异步回调](#callbacks)
 
 ## 接口总览
 
@@ -15,6 +21,8 @@
 | 查询支付状态 | GET | `/pay/check-status/{trade_id}` | 否 |
 | 切换支付网络/通道 | POST | `/pay/switch-network` | 否 |
 | EPay 兼容创建交易 | GET/POST | `/payments/epay/v1/order/create-transaction/submit.php` | 是 |
+| 提交交易哈希核验 | POST | `/pay/submit-tx-hash/{trade_id}` | 否，提交 `block_transaction_id` |
+| 收银台返回商户 | GET | `/pay/return/{trade_id}` | 否，返回 HTTP 302 |
 | OkPay 平台回调 | POST | `/payments/okpay/v1/notify` | OkPay 签名 |
 
 ## 统一响应格式
@@ -40,6 +48,8 @@
 | `request_id` | string | 请求 ID，服务端自动生成。 |
 
 签名错误会返回 HTTP 401；业务错误通常返回 HTTP 400，并在 `status_code` 中给出具体业务码。
+
+<a id="signing"></a>
 
 ## 签名规则
 
@@ -133,6 +143,8 @@ function epaySign(array $params, string $secretKey): string
 }
 ```
 
+<a id="create"></a>
+
 ## 创建 GMPay 交易
 
 `POST /payments/gmpay/v1/order/create-transaction`
@@ -167,11 +179,12 @@ function epaySign(array $params, string $secretKey): string
 | `order_id` | string | 是 | 商户订单号，最长 32 字符，不能重复。 |
 | `currency` | string | 是 | 法币币种，如 `cny`、`usd`。 |
 | `token` | string | 条件必填 | 收款币种，如 `usdt`、`trx`、`usdc`、`sol`。GMPay 可与 `network` 同时省略以创建状态 `4` 占位订单。 |
-| `network` | string | 条件必填 | 收款网络，如 `tron`、`solana`、`ethereum`、`bsc`、`polygon`、`plasma`。GMPay 可与 `token` 同时省略以创建状态 `4` 占位订单。 |
+| `network` | string | 条件必填 | 收款网络，如 `tron`、`solana`、`ethereum`、`binance`、`polygon`、`plasma`。GMPay 可与 `token` 同时省略以创建状态 `4` 占位订单。 |
 | `amount` | number | 是 | 法币金额，必须大于 `0.01`。 |
-| `notify_url` | string | 是 | 支付成功异步回调地址。 |
+| `notify_url` | string | 条件必填 | 省略时使用该商户 API Key 的默认回调地址；两处至少填写一处。 |
 | `redirect_url` | string | 否 | 支付完成后的同步跳转地址。 |
 | `name` | string | 否 | 商品/订单名称。 |
+| `callback_version` | integer | 否 | GMPay JSON 回调版本，默认 1。创建订单时传 2 并将该参数计入签名，可收到含实际支付网络的签名回调。 |
 | `payment_type` | string | 否 | GMPay 兼容字段，不要求必须传；如果传了非空值，必须参与 GMPay `signature` 计算。普通 GMPay 不传时后台会存为 `Gmpay`；传 `Epay`（大小写不敏感）会统一存为 `Epay` 并使用 EPay 回调格式，且 PID 必须是数字。 |
 | `signature` | string | 是 | 64 位小写十六进制 GMPay HMAC-SHA256 签名。 |
 
@@ -220,7 +233,7 @@ function epaySign(array $params, string $secretKey): string
 
 `GET /payments/gmpay/v1/config`
 
-返回收银台展示配置、可用链/币种、EPay 默认配置和 OkPay 公共配置。
+返回收银台展示配置、可用链/币种、EPay 默认配置和托管收银台的公共配置（`okpay`、`xlayer`）。
 
 ### 成功响应示例
 
@@ -233,12 +246,22 @@ function epaySign(array $params, string $secretKey): string
       {
         "network": "tron",
         "display_name": "TRON",
-        "tokens": ["TRX", "USDT"]
+        "tokens": ["A7A5", "TRX", "USDT"],
+        "token_details": {
+          "A7A5": {"contract_address": "TLeVfrdym8RoJreJ23dAGyfJDygRtiWKBZ", "decimals": 6},
+          "TRX": {"contract_address": "", "decimals": 6},
+          "USDT": {"contract_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "decimals": 6}
+        }
       },
       {
         "network": "solana",
         "display_name": "Solana",
-        "tokens": ["SOL", "USDC", "USDT"]
+        "tokens": ["SOL", "USDC", "USDT"],
+        "token_details": {
+          "SOL": {"contract_address": "", "decimals": 9},
+          "USDC": {"contract_address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "decimals": 6},
+          "USDT": {"contract_address": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", "decimals": 6}
+        }
       }
     ],
     "site": {
@@ -247,7 +270,10 @@ function epaySign(array $params, string $secretKey): string
       "website_title": "Acme Payments",
       "support_link": "https://example.com/support",
       "background_color": "#0f172a",
-      "background_image_url": "https://cdn.example.com/background.png"
+      "background_image_url": "https://cdn.example.com/background.png",
+      "withdrawal_reminder_enabled": false,
+      "payment_reminder_title": "",
+      "payment_reminder_body": ""
     },
     "epay": {
       "default_token": "",
@@ -258,17 +284,41 @@ function epaySign(array $params, string $secretKey): string
       "enabled": false,
       "allow_tokens": ["USDT", "TRX"]
     },
-    "version": "v1.0.1"
+    "xlayer": {
+      "enabled": false,
+      "allow_tokens": ["USDC", "USDT0", "USDG"]
+    },
+    "version": "0.0.0-dev"
   },
   "request_id": "b1344d70-ff19-4543-b601-37abfb3b3686"
 }
 ```
 
-`supported_assets` 只包含同时满足以下条件的组合：
+传入收银台订单号 `?trade_id=...` 可查询该订单可选的链上支付组合。新增组合必须有有效的收款地址和汇率，按订单原始金额与币种换算后至少支付 0.01 个代币。已经分配的待支付地址和金额仍可使用。订单达到切换次数上限后，只返回已分配且仍可付款的链上组合。省略参数或查询已结束的订单时返回通用列表。
+
+通用 `supported_assets` 列表只包含同时满足以下条件的组合：
 
 - 链已启用。
 - 该链有可用钱包地址。
 - 该链至少有一个启用中的 token。
+
+### 链上付款提醒
+
+收银台从公共配置读取 `data.site.withdrawal_reminder_enabled`（布尔值，默认 `false`）。等配置返回后，仅在开关开启、订单处于链上待支付状态、已有收款地址且 `actual_amount > 0` 时，于到账金额下显示提醒。关闭时整块隐藏。对接旧版本后端时，已加载的配置缺少该字段时隐藏提醒。
+
+从 `data.site.payment_reminder_title` 和 `data.site.payment_reminder_body` 读取自定义标题与正文。任一字段缺失、留空或仅含空白时，该字段使用当前收银台语言的默认文案。正文按纯文本展示，支持多行；每个 `{amount}` 都替换为页面展示的实际到账金额和币种，例如 `14.2857 USDT`。
+
+后台「系统配置 → 基础配置」沿用 `brand.withdrawal_reminder_enabled` 开关。通过 `GET /admin/api/v1/settings?group=brand` 读取配置，调用已鉴权的 `PUT /admin/api/v1/settings` 保存变动项。
+
+```json
+{"items":[
+  {"group":"brand","key":"brand.withdrawal_reminder_enabled","type":"bool","value":true},
+  {"group":"brand","key":"brand.payment_reminder_title","type":"string","value":"转账须知"},
+  {"group":"brand","key":"brand.payment_reminder_body","type":"string","value":"请确认收款网络，实际到账应为 {amount}"}
+]}
+```
+
+响应中对应项的 `ok` 为 `true` 表示保存成功。重新打开收银台即可读取新值。
 
 ## 收银台页面
 
@@ -287,6 +337,8 @@ function epaySign(array $params, string $secretKey): string
 `GET /pay/checkout-counter-resp/{trade_id}`
 
 用于前端收银台读取订单展示数据。该接口只确认订单存在并返回基础数据；当前支付状态请调用 `/pay/check-status/{trade_id}`。
+
+EPay 订单的 `redirect_url` 用于支付成功后的签名回跳。付款人提前离开时可使用 `merchant_home_url` 返回商户首页。该字段仅在商户提供有效的 HTTP(S) 回跳地址时返回。
 
 ### 成功响应示例
 
@@ -346,9 +398,13 @@ function epaySign(array $params, string $secretKey): string
 
 前端看到 `status=4` 时，应展示选择网络和币种/支付通道的界面，并在用户选择后调用 `/pay/switch-network`。选择链上支付成功后，该父订单会变为 `status=1`，`actual_amount`、`token`、`network`、`receive_address` 会被补全，但 `is_selected` 保持 `false`，由后续同目标选择流程标记为已选中。选择 OkPay 成功后，接口返回同一个父订单 `trade_id` 和第三方 `payment_url`；父订单会变为 `status=1`、`is_selected=false`、`pay_provider=okpay`、`network=okpay`、`receive_address=OKPAY`。
 
+<a id="status"></a>
+
 ## 查询支付状态
 
 `GET /pay/check-status/{trade_id}`
+
+收银台可添加 `?checkout=true`。若当前子单已过期且父单已支付，返回父单的 `trade_id`、`status: 2` 以及已配置的 `redirect_url`。EPay 使用父单的签名返回入口。直接打开该子单的收银台时也会显示已支付的父单。省略参数时，状态接口始终返回所查订单自身的状态。
 
 ### 成功响应示例
 
@@ -372,6 +428,10 @@ function epaySign(array $params, string $secretKey): string
 | `2` | 支付成功 |
 | `3` | 已过期 |
 | `4` | 等待选择支付网络/币种 |
+| `5` | 已发现匹配的链上转账，正在确认 |
+| `6` | 查无交易或转账与订单不符，等待管理员复核 |
+
+状态 `5` 表示已发现候选交易，收银台应显示“确认中”并继续轮询。达到确认深度后，启用二次核验的订单会调用 `GET /v1/transactions/{network}/{hash}`。查到同一条链上的对应交易即通过二次核验；入账的地址、币种和金额取自已匹配的扫块事件。节点超时或不可用时自动换节点；本轮仍失败则延迟重试，服务重启后继续。节点明确返回查无交易，或交易与订单不匹配时转入状态 `6`，保留 `review_transaction_hash` 供管理员复核。转账核对成功后进入状态 `2` 并触发回调。
 
 ## 切换支付网络/通道
 
@@ -389,6 +449,8 @@ function epaySign(array $params, string $secretKey): string
 }
 ```
 
+托管收银台使用 `okpay` 或 `xlayer` 及该服务商允许的币种。使用响应中的 `payment_url` 打开付款页。X Layer 由 EPUSDT 查询 OKX 订单并在核对 `settled` 后确认到账。
+
 切换到 OkPay：
 
 ```json
@@ -405,7 +467,7 @@ function epaySign(array $params, string $secretKey): string
 | --- | --- | --- | --- |
 | `trade_id` | string | 是 | 父订单交易号。 |
 | `token` | string | 是 | 目标币种。 |
-| `network` | string | 是 | 目标网络，或特殊值 `okpay`。 |
+| `network` | string | 是 | 目标网络，或托管通道 `okpay`、`xlayer`。 |
 
 ### 成功响应
 
@@ -433,6 +495,8 @@ function epaySign(array $params, string $secretKey): string
 /pay/checkout-counter/{trade_id}
 ```
 
+升级后创建的订单支持重新打开待支付收银台。同一商户使用相同签名字段通过 GET 或 POST 重试时，返回原付款链接，原有效期继续计时。请求字段改变、支付窗口已关闭，或历史订单缺少首次请求记录时，返回 `10002`。
+
 ### 请求参数
 
 | 字段 | 位置 | 类型 | 必填 | 说明 |
@@ -440,7 +504,7 @@ function epaySign(array $params, string $secretKey): string
 | `pid` | query/form | string | 是 | 商户 PID。建议使用数字 PID；EPay 回调会按数字 PID 输出。 |
 | `money` | query/form | number | 是 | 法币金额。 |
 | `out_trade_no` | query/form | string | 是 | 商户订单号。 |
-| `notify_url` | query/form | string | 是 | 异步回调地址。 |
+| `notify_url` | query/form | string | 条件必填 | 省略时使用该商户 API Key 的默认回调地址；两处至少填写一处。 |
 | `return_url` | query/form | string | 否 | 支付完成后的同步跳转地址。 |
 | `name` | query/form | string | 否 | 商品/订单名称。 |
 | `type` | query/form | string | 否 | 仅支持空值、`alipay`，或当前已启用并可收款的 `token.network` selector（如 `usdt.tron`）。推荐使用小写 `alipay`。 |
@@ -481,13 +545,17 @@ EPay 接口解析 `type/token/network/currency` 的规则：
 
 后台默认配置可通过 `/payments/gmpay/v1/config` 的 `epay` 字段查看；新安装默认只预置 `epay.default_currency=cny`，`epay.default_token` 和 `epay.default_network` 为空，因此 EPay 未显式传 token/network 时会创建状态 `4` 占位订单。已有数据库的配置不会被 seed 覆盖，删除或置空 `epay.default_token` 和 `epay.default_network` 后，这两个字段会返回空字符串。
 
+<a id="callbacks"></a>
+
 ## 商户异步回调
+
+订单创建时固定回调地址、PID 和签名密钥。轮换、停用或删除商户 API Key 后，该订单的通知、重发及 EPay 成功回跳仍以原密钥签名。商户应保留历史订单对应的验签密钥。升级时，旧订单使用数据库中仍可取得的商户凭据，升级前已覆盖的密钥无法恢复。
 
 订单支付成功后，Epusdt 会向订单的 `notify_url` 发送异步通知。目标服务器处理完成后需返回 HTTP 200，响应体为 `ok` 或 `success`（大小写不敏感）。否则会按队列配置重试：首次失败后最多重试 `order_notice_max_retry` 次，重试间隔按 `callback_retry_base_seconds` 指数退避，最大 5 分钟。
 
 ### GMPay 回调
 
-普通 GMPay 订单使用 POST JSON 回调。
+普通 GMPay 订单使用 POST JSON 回调。选择 `callback_version=2` 时，回调新增参与 HMAC 验签的 `network`。切网后的回调保留父订单交易号和商户订单号，代币、实付金额、收款地址和交易哈希取自实际入账的订单。
 
 ```json
 {
@@ -535,7 +603,7 @@ type=alipay
 name=VIP
 money=100.0000
 trade_status=TRADE_SUCCESS
-sign=a1b2c3d4...
+sign=cc44fab3f264615d859f8a1fd36d2f08
 sign_type=MD5
 ```
 
@@ -563,6 +631,8 @@ Epusdt 会按配置的 OkPay shop token 验证 OkPay 签名，成功后将对应
 
 ## status_code 返回状态码及含义
 
+按 HTTP 状态处理请求结果，按 JSON 中的数字 `status_code` 区分业务原因；排查问题时保留 `request_id`。v1 已分配的业务码含义固定。[机器可读的错误码清单](../src/docs/error-codes.json)
+
 | 状态码 | HTTP 状态 | 说明 |
 | --- | --- | --- |
 | `200` | 200 | 成功 |
@@ -586,3 +656,13 @@ Epusdt 会按配置的 OkPay shop token 验证 OkPay 签名，成功后将对应
 | `10017` | 400 | 支付服务商未启用 |
 | `10018` | 400 | 支付服务商配置不完整 |
 | `10019` | 400 | 支付服务商不支持该币种或网络 |
+| `10038` | 400 | 交易哈希核验失败 |
+| `10039` | 400 | 仅支持对链上订单进行人工核验 |
+| `10041` | 400 | 通知地址无效 |
+| `10042` | 400 | 支付服务商创建订单失败 |
+| `10044` | 400 | 订单跳转地址无效 |
+| `10045` | 400 | 订单对应的商户密钥不可用 |
+| `10046` | 400 | 无法生成 EPay 返回签名 |
+| `10049` | 400 | 收款地址格式与所选网络不符 |
+
+[完整业务错误码](../src/util/constant/errno.go)

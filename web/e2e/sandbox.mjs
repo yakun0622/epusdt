@@ -116,8 +116,9 @@ export async function installSandbox(page,{ orders=[orderFixture()], readFailure
       if(path==='/admin/api/v1/dashboard/rpc-stats/snapshot')return reply(ok(rpcSnapshot));
       if(path==='/admin/api/v1/settings/rate/status')
         return reply(ok({mode:'fixed',cache_ttl_seconds:60,bases:[]}));
+      if(path==='/admin/api/v1/chainscanner/admin/nodes')return reply([]);
       if(['/admin/api/v1/wallets','/admin/api/v1/chains',
-           '/admin/api/v1/chain-tokens','/admin/api/v1/rpc-nodes',
+           '/admin/api/v1/chain-tokens',
            '/admin/api/v1/api-keys','/admin/api/v1/settings',
            '/admin/api/v1/notification-channels'].includes(path))
         return reply(ok([]));

@@ -40,12 +40,11 @@ func statsBucketExpr(column string, hourly bool) (string, error) {
 func statsBucketExprForDialect(dialect, column string, hourly bool) (string, error) {
 	switch dialect {
 	case "sqlite", "":
-		// modernc SQLite stores time.Time as Go's time.String() by default.
-		// Prefix buckets work for that format and SQLite datetime text.
+		timestamp := SQLiteTimestampUTCExpr(column)
 		if hourly {
-			return fmt.Sprintf("replace(substr(%s, 1, 13), 'T', ' ') || ':00'", column), nil
+			return "strftime('%Y-%m-%d %H:00', " + timestamp + ", 'localtime')", nil
 		}
-		return fmt.Sprintf("substr(%s, 1, 10)", column), nil
+		return "strftime('%Y-%m-%d', " + timestamp + ", 'localtime')", nil
 	case "mysql":
 		// MySQL 5.7 supports DATE_FORMAT; keep the display key identical to
 		// the UTC/local day bucket representations used by the dashboard.
@@ -87,20 +86,22 @@ func HourlyOrderStats(start, end time.Time) ([]DailyStat, error) {
 }
 
 func queryOrderStats(start, end time.Time, hourly bool) ([]DailyStat, error) {
+	// Normalize the bounds and stored text to UTC before comparing them.
+	start, end = start.UTC(), end.UTC()
 	var rows []DailyStat
 	bucket, err := statsBucketExpr("created_at", hourly)
 	if err != nil {
 		return nil, err
 	}
-	err = dao.Mdb.Model(&mdb.Orders{}).
+	err = merchantOrders().
 		Select(fmt.Sprintf(`%s AS day,
             COUNT(*) AS order_count,
             SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success_count,
             SUM(CASE WHEN status = ? THEN amount ELSE 0 END) AS total_amount,
             SUM(CASE WHEN status = ? THEN actual_amount ELSE 0 END) AS actual_amount`, bucket),
 			mdb.StatusPaySuccess, mdb.StatusPaySuccess, mdb.StatusPaySuccess).
-		Where("created_at >= ?", start).
-		Where("created_at <= ?", end).
+		Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(start)).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(end)).
 		Group(bucket).
 		Order("day ASC").
 		Scan(&rows).Error
@@ -172,18 +173,19 @@ func HourlyAssetByAddress(start, end time.Time) ([]AddressDailyStat, error) {
 }
 
 func queryAssetByAddress(start, end time.Time, hourly bool) ([]AddressDailyStat, error) {
+	start, end = start.UTC(), end.UTC()
 	var rows []AddressDailyStat
 	bucket, err := statsBucketExpr("created_at", hourly)
 	if err != nil {
 		return nil, err
 	}
-	err = dao.Mdb.Model(&mdb.Orders{}).
+	err = merchantOrders().
 		Select(fmt.Sprintf(`%s AS day,
             receive_address AS address,
             SUM(actual_amount) AS actual_amount`, bucket)).
 		Where("status = ?", mdb.StatusPaySuccess).
-		Where("created_at >= ?", start).
-		Where("created_at <= ?", end).
+		Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(start)).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(end)).
 		Group(bucket).
 		Group("receive_address").
 		Order("day ASC, address ASC").
@@ -246,7 +248,7 @@ func fillAddressStats(start, end time.Time, rows []AddressDailyStat, hourly bool
 // time. Used by the overview "total asset" card.
 func SumPaidActualAmount() (float64, error) {
 	var sum float64
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrders().
 		Select("COALESCE(SUM(actual_amount), 0)").
 		Where("status = ?", mdb.StatusPaySuccess).
 		Scan(&sum).Error
@@ -256,19 +258,20 @@ func SumPaidActualAmount() (float64, error) {
 // PaidStatsInRange returns (order_count, success_count, actual_sum) for
 // a given time range. Caller chooses the range (today / last 7 days).
 func PaidStatsInRange(start, end time.Time) (int64, int64, float64, error) {
+	start, end = start.UTC(), end.UTC()
 	type row struct {
 		OrderCount   int64
 		SuccessCount int64
 		ActualSum    float64
 	}
 	var r row
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrders().
 		Select(`COUNT(*) AS order_count,
             SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success_count,
             SUM(CASE WHEN status = ? THEN actual_amount ELSE 0 END) AS actual_sum`,
 			mdb.StatusPaySuccess, mdb.StatusPaySuccess).
-		Where("created_at >= ?", start).
-		Where("created_at <= ?", end).
+		Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(start)).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(end)).
 		Scan(&r).Error
 	return r.OrderCount, r.SuccessCount, r.ActualSum, err
 }
@@ -276,10 +279,11 @@ func PaidStatsInRange(start, end time.Time) (int64, int64, float64, error) {
 // ActiveAddressCountInRange returns the number of distinct wallet addresses
 // that appear in at least one order within [start, end].
 func ActiveAddressCountInRange(start, end time.Time) (int64, error) {
+	start, end = start.UTC(), end.UTC()
 	var count int64
-	err := dao.Mdb.Model(&mdb.Orders{}).
-		Where("created_at >= ?", start).
-		Where("created_at <= ?", end).
+	err := merchantOrders().
+		Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(start)).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(end)).
 		Distinct("receive_address").
 		Count(&count).Error
 	return count, err
@@ -289,22 +293,21 @@ func ActiveAddressCountInRange(start, end time.Time) (int64, error) {
 // created_at and updated_at for orders that reached StatusPaySuccess
 // in the given range. Zero-safe when no rows match.
 func AveragePaymentDurationSeconds(start, end time.Time) (float64, error) {
+	start, end = start.UTC(), end.UTC()
 	type row struct {
 		Avg float64
 	}
 	var r row
-	// Using TIMESTAMPDIFF would be MySQL-specific. Fetch the raw
-	// columns and compute in Go — trend windows are small enough.
 	type pair struct {
 		CreatedAt time.Time
 		UpdatedAt time.Time
 	}
 	var pairs []pair
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrders().
 		Select("created_at, updated_at").
 		Where("status = ?", mdb.StatusPaySuccess).
-		Where("created_at >= ?", start).
-		Where("created_at <= ?", end).
+		Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(start)).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(end)).
 		Scan(&pairs).Error
 	if err != nil {
 		return 0, err
@@ -322,11 +325,12 @@ func AveragePaymentDurationSeconds(start, end time.Time) (float64, error) {
 
 // CountExpiredInRange returns the number of StatusExpired orders in range.
 func CountExpiredInRange(start, end time.Time) (int64, error) {
+	start, end = start.UTC(), end.UTC()
 	var n int64
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrders().
 		Where("status = ?", mdb.StatusExpired).
-		Where("created_at >= ?", start).
-		Where("created_at <= ?", end).
+		Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(start)).
+		Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(end)).
 		Count(&n).Error
 	return n, err
 }
@@ -340,7 +344,7 @@ func RecentOrders(limit int) ([]mdb.Orders, error) {
 		limit = 100
 	}
 	var rows []mdb.Orders
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrders().
 		Order("id DESC").
 		Limit(limit).
 		Find(&rows).Error

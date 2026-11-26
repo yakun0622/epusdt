@@ -13,8 +13,8 @@ import (
 // list page. Zero values are ignored so callers can pass only what the
 // user actually filtered on.
 type OrderListFilter struct {
-	Status   int
-	Network  string
+	Statuses []int
+	Networks []string
 	Token    string
 	Address  string
 	Keyword  string // matches trade_id / order_id / block_transaction_id
@@ -22,9 +22,6 @@ type OrderListFilter struct {
 	EndAt    *time.Time
 	Page     int
 	PageSize int
-	// ParentOnly restricts the result to top-level orders only
-	// (parent_trade_id = ''). Sub-orders are excluded from the listing.
-	ParentOnly bool
 }
 
 // ListOrders returns a paginated order slice plus the total count under
@@ -54,15 +51,12 @@ func ListOrders(f OrderListFilter) ([]mdb.Orders, int64, error) {
 }
 
 func buildOrderListQuery(f OrderListFilter) *gorm.DB {
-	tx := dao.Mdb.Model(&mdb.Orders{})
-	if f.ParentOnly {
-		tx = tx.Where("parent_trade_id = ?", "")
+	tx := merchantOrders()
+	if len(f.Statuses) > 0 {
+		tx = tx.Where("status IN ?", f.Statuses)
 	}
-	if f.Status > 0 {
-		tx = tx.Where("status = ?", f.Status)
-	}
-	if f.Network != "" {
-		tx = tx.Where("network = ?", strings.ToLower(f.Network))
+	if len(f.Networks) > 0 {
+		tx = tx.Where("network IN ?", f.Networks)
 	}
 	if f.Token != "" {
 		tx = tx.Where("token = ?", strings.ToUpper(f.Token))
@@ -72,13 +66,21 @@ func buildOrderListQuery(f OrderListFilter) *gorm.DB {
 	}
 	if f.Keyword != "" {
 		kw := "%" + strings.TrimSpace(f.Keyword) + "%"
-		tx = tx.Where("trade_id LIKE ? OR order_id LIKE ? OR block_transaction_id LIKE ?", kw, kw, kw)
+		idText := "CAST(id AS TEXT)"
+		if tx.Dialector.Name() == "mysql" {
+			idText = "CAST(id AS CHAR)"
+		}
+		tx = tx.Where(idText+` LIKE ? OR trade_id LIKE ? OR order_id LIKE ? OR block_transaction_id LIKE ?
+			OR EXISTS (SELECT 1 FROM orders AS attempt
+				WHERE attempt.parent_trade_id = orders.trade_id AND attempt.deleted_at IS NULL
+				  AND (attempt.trade_id LIKE ? OR attempt.order_id LIKE ? OR attempt.block_transaction_id LIKE ? OR attempt.review_transaction_hash LIKE ?))`,
+			kw, kw, kw, kw, kw, kw, kw, kw)
 	}
 	if f.StartAt != nil {
-		tx = tx.Where("created_at >= ?", *f.StartAt)
+		tx = tx.Where(PrimaryTimestampExpr("created_at")+" >= ?", PrimaryTimestampBound(*f.StartAt))
 	}
 	if f.EndAt != nil {
-		tx = tx.Where("created_at <= ?", *f.EndAt)
+		tx = tx.Where(PrimaryTimestampExpr("created_at")+" <= ?", PrimaryTimestampBound(*f.EndAt))
 	}
 	return tx
 }
@@ -103,7 +105,7 @@ func CountOrdersByStatus() (map[int]int64, error) {
 		Total  int64
 	}
 	var rows []row
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrders().
 		Select("status, COUNT(*) AS total").
 		Group("status").
 		Scan(&rows).Error
@@ -120,11 +122,70 @@ func CountOrdersByStatus() (map[int]int64, error) {
 // CloseOrderManually transitions a pending order to expired. It covers both
 // payable orders and placeholder orders waiting for token/network selection.
 func CloseOrderManually(tradeID string) (bool, error) {
-	result := dao.Mdb.Model(&mdb.Orders{}).
-		Where("trade_id = ?", tradeID).
-		Where("status IN ?", []int{mdb.StatusWaitPay, mdb.StatusWaitSelect}).
-		Update("status", mdb.StatusExpired)
-	return result.RowsAffected > 0, result.Error
+	closable := []int{mdb.StatusWaitPay, mdb.StatusWaitSelect, mdb.StatusConfirming, mdb.StatusManualReview}
+	var closed bool
+	err := dao.Mdb.Transaction(func(tx *gorm.DB) error {
+		var order mdb.Orders
+		if err := tx.Where("trade_id = ?", tradeID).Limit(1).Find(&order).Error; err != nil {
+			return err
+		}
+		if order.ID == 0 {
+			return nil
+		}
+		result := tx.Model(&mdb.Orders{}).
+			Where("id = ?", order.ID).
+			Where("status IN ?", closable).
+			Updates(map[string]interface{}{
+				"status":                  mdb.StatusExpired,
+				"review_transaction_hash": "",
+			})
+		if result.Error != nil || result.RowsAffected == 0 {
+			return result.Error
+		}
+		closed = true
+		orderIDs := []uint64{order.ID}
+		var subs []mdb.Orders
+		if order.ParentTradeId == "" {
+			if err := tx.Where("parent_trade_id = ? AND status IN ?", order.TradeId, closable).Find(&subs).Error; err != nil {
+				return err
+			}
+			if len(subs) > 0 {
+				if err := tx.Model(&mdb.Orders{}).
+					Where("parent_trade_id = ? AND status IN ?", order.TradeId, closable).
+					Updates(map[string]interface{}{
+						"status":                  mdb.StatusExpired,
+						"review_transaction_hash": "",
+					}).Error; err != nil {
+					return err
+				}
+				for _, s := range subs {
+					orderIDs = append(orderIDs, s.ID)
+				}
+			}
+		}
+		tradeIDs := make([]string, 0, len(orderIDs))
+		tradeIDs = append(tradeIDs, order.TradeId)
+		for _, sub := range subs {
+			tradeIDs = append(tradeIDs, sub.TradeId)
+		}
+		// Local closure also terminates hosted checkout rows. Otherwise an
+		// OkPay/XLayer payment can remain pending forever after its order is
+		// manually expired.
+		if tx.Migrator().HasTable(&mdb.ProviderOrder{}) {
+			if err := tx.Model(&mdb.ProviderOrder{}).
+				Where("trade_id IN ?", tradeIDs).
+				Where("provider NOT IN ?", []string{"", mdb.PaymentProviderOnChain}).
+				Where("status IN ?", []string{mdb.ProviderOrderStatusCreating, mdb.ProviderOrderStatusPending}).
+				Update("status", mdb.ProviderOrderStatusExpired).Error; err != nil {
+				return err
+			}
+		}
+		if !tx.Migrator().HasTable(&mdb.PaymentConfirmation{}) {
+			return nil
+		}
+		return tx.Where("order_id IN ?", orderIDs).Delete(&mdb.PaymentConfirmation{}).Error
+	})
+	return closed, err
 }
 
 // ReopenOrderCallback flips callback_confirm back to NO so the mq

@@ -3,6 +3,7 @@ package route
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GMWalletApp/epusdt/config"
+	"github.com/GMWalletApp/epusdt/controller/admin"
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/data"
 	"github.com/GMWalletApp/epusdt/model/mdb"
@@ -232,15 +234,20 @@ func TestAdminProtectedRoute_NoToken(t *testing.T) {
 	e := setupTestEnv(t)
 	protectedRoutes := []string{
 		"/admin/api/v1/auth/me",
+		"/admin/api/v1/system/version/check",
+		"/admin/api/v1/system/version/current",
+		"/admin/api/v1/system/update/capability",
+		"/admin/api/v1/system/update/status",
 		"/admin/api/v1/api-keys",
 		"/admin/api/v1/chains",
 		"/admin/api/v1/wallets",
 		"/admin/api/v1/orders",
+		"/admin/api/v1/diagnostics/export",
 		"/admin/api/v1/dashboard/overview",
 		"/admin/api/v1/dashboard/rpc-stats",
 		"/admin/api/v1/settings",
 		"/admin/api/v1/settings/rate/status",
-		"/admin/api/v1/rpc-nodes",
+		"/admin/api/v1/chainscanner/admin/nodes",
 		"/admin/api/v1/notification-channels",
 	}
 	for _, path := range protectedRoutes {
@@ -253,6 +260,10 @@ func TestAdminProtectedRoute_NoToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/v1/settings/rate/refresh", strings.NewReader(`{}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assertUnauthorized(t, rec)
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/v1/system/update/start", nil)
+	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	assertUnauthorized(t, rec)
 }
@@ -286,6 +297,13 @@ func TestAdminChangePassword(t *testing.T) {
 	}, token)
 	t.Logf("ChangePassword response: %s", rec.Body.String())
 	assertOK(t, rec)
+	if rec := doGetAdmin(e, "/admin/api/v1/api-keys", token); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("old token remained valid after password change: HTTP %d", rec.Code)
+	}
+	newToken := adminLogin(t, e, testAdminUsername, "new-pass-456")
+	if rec := doGetAdmin(e, "/admin/api/v1/api-keys", newToken); rec.Code != http.StatusOK {
+		t.Fatalf("new token was rejected after password change: HTTP %d", rec.Code)
+	}
 
 	// Verify old password no longer works.
 	rec2 := doPost(e, "/admin/api/v1/auth/login", map[string]interface{}{
@@ -359,6 +377,10 @@ func TestAdminInitialPasswordMetadataFlow(t *testing.T) {
 		"new_password": "new-pass-789",
 	}, token)
 	assertOK(t, recChange)
+	if rec := doGetAdmin(e, "/admin/api/v1/auth/me", token); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("old token remained valid after initial password change: HTTP %d", rec.Code)
+	}
+	token = adminLogin(t, e, testAdminUsername, "new-pass-789")
 
 	recHash2 := doGet(e, "/admin/api/v1/auth/init-password-hash")
 	respHash2 := assertOK(t, recHash2)
@@ -398,7 +420,7 @@ func TestAdminApiKeys_CRUD(t *testing.T) {
 
 	// Create a new key.
 	rec = doPostAdmin(e, "/admin/api/v1/api-keys", map[string]interface{}{
-		"name": "test-created-key",
+		"name": "test-created-key", "notify_url": "https://93.184.216.34/default",
 	}, token)
 	t.Logf("CreateApiKey: %s", rec.Body.String())
 	resp := assertOK(t, rec)
@@ -415,6 +437,20 @@ func TestAdminApiKeys_CRUD(t *testing.T) {
 	}, token)
 	t.Logf("UpdateApiKey: %s", rec.Body.String())
 	assertOK(t, rec)
+
+	for _, want := range []string{"https://93.184.216.34/default", "https://93.184.216.34/edited", ""} {
+		if want != "https://93.184.216.34/default" {
+			assertOK(t, doPatchAdmin(e, "/admin/api/v1/api-keys/"+keyIDStr, map[string]interface{}{"notify_url": want}, token))
+		}
+		key, err := data.GetApiKeyByID(uint64(keyID.(float64)))
+		if err != nil || key.NotifyUrl != want {
+			t.Fatal("default callback address was not saved", err)
+		}
+	}
+	rec = doPatchAdmin(e, "/admin/api/v1/api-keys/"+keyIDStr, map[string]interface{}{"notify_url": "invalid"}, token)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"status_code":10041`) {
+		t.Fatal("invalid default callback address accepted")
+	}
 
 	// Get secret.
 	rec = doGetAdmin(e, "/admin/api/v1/api-keys/"+keyIDStr+"/secret", token)
@@ -512,123 +548,10 @@ func TestAdminChainTokens_CRUD(t *testing.T) {
 
 // ─── RPC Nodes ────────────────────────────────────────────────────────────────
 
-// TestAdminRpcNodes_CRUD verifies CRUD operations for RPC nodes.
-func TestAdminRpcNodes_CRUD(t *testing.T) {
+func TestRetiredNodeRoutes(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
-
-	// List — empty initially.
-	rec := doGetAdmin(e, "/admin/api/v1/rpc-nodes", token)
-	t.Logf("ListRpcNodes: %s", rec.Body.String())
-	assertOK(t, rec)
-
-	// Create.
-	rec = doPostAdmin(e, "/admin/api/v1/rpc-nodes", map[string]interface{}{
-		"network": "ethereum",
-		"url":     "https://eth-mainnet.example.com",
-		"type":    "http",
-	}, token)
-	t.Logf("CreateRpcNode: %s", rec.Body.String())
-	resp := assertOK(t, rec)
-	dataObj, _ := resp["data"].(map[string]interface{})
-	nodeID := dataObj["id"]
-	if nodeID == nil {
-		t.Fatal("CreateRpcNode missing id")
-	}
-	if got, _ := dataObj["purpose"].(string); got != mdb.RpcNodePurposeGeneral {
-		t.Fatalf("created purpose = %q, want %q", got, mdb.RpcNodePurposeGeneral)
-	}
-	nodeIDStr := fmt.Sprintf("%.0f", nodeID.(float64))
-
-	// Update.
-	rec = doPatchAdmin(e, "/admin/api/v1/rpc-nodes/"+nodeIDStr, map[string]interface{}{
-		"url":     "https://eth-mainnet2.example.com",
-		"purpose": mdb.RpcNodePurposeManualVerify,
-	}, token)
-	t.Logf("UpdateRpcNode: %s", rec.Body.String())
-	assertOK(t, rec)
-	updatedNode, err := data.GetRpcNodeByID(uint64(nodeID.(float64)))
-	if err != nil {
-		t.Fatalf("reload rpc node: %v", err)
-	}
-	if updatedNode.Purpose != mdb.RpcNodePurposeManualVerify {
-		t.Fatalf("updated purpose = %q, want %q", updatedNode.Purpose, mdb.RpcNodePurposeManualVerify)
-	}
-
-	// Health check — network likely unreachable in test, but route must not 404/500.
-	rec = doPostAdmin(e, "/admin/api/v1/rpc-nodes/"+nodeIDStr+"/health-check", nil, token)
-	t.Logf("HealthCheckRpcNode: status=%d body=%s", rec.Code, rec.Body.String())
-	if rec.Code == http.StatusNotFound {
-		t.Fatalf("health-check route returned 404")
-	}
-
-	// Delete.
-	rec = doDeleteAdmin(e, "/admin/api/v1/rpc-nodes/"+nodeIDStr, token)
-	t.Logf("DeleteRpcNode: %s", rec.Body.String())
-	assertOK(t, rec)
-}
-
-func TestAdminRpcNodes_RejectsURLTypeMismatch(t *testing.T) {
-	e, token := setupAdminTestEnv(t)
-
-	rec := doPostAdmin(e, "/admin/api/v1/rpc-nodes", map[string]interface{}{
-		"network": "ethereum",
-		"url":     "wss://eth-mainnet.example.com",
-		"type":    mdb.RpcNodeTypeHttp,
-	}, token)
-	t.Logf("CreateRpcNode(http with wss): status=%d body=%s", rec.Code, rec.Body.String())
-	if rec.Code == http.StatusOK {
-		t.Fatalf("expected create mismatch to fail, got 200: %s", rec.Body.String())
-	}
-	assertErrorCode(t, rec, 10022)
-
-	rec = doPostAdmin(e, "/admin/api/v1/rpc-nodes", map[string]interface{}{
-		"network": "ethereum",
-		"url":     "https://eth-mainnet.example.com",
-		"type":    mdb.RpcNodeTypeWs,
-	}, token)
-	t.Logf("CreateRpcNode(ws with https): status=%d body=%s", rec.Code, rec.Body.String())
-	if rec.Code == http.StatusOK {
-		t.Fatalf("expected create mismatch to fail, got 200: %s", rec.Body.String())
-	}
-	assertErrorCode(t, rec, 10023)
-
-	rec = doPostAdmin(e, "/admin/api/v1/rpc-nodes", map[string]interface{}{
-		"network": "ethereum",
-		"url":     "https://eth-mainnet.example.com",
-		"type":    mdb.RpcNodeTypeHttp,
-		"purpose": "invalid-purpose",
-	}, token)
-	t.Logf("CreateRpcNode(invalid purpose): status=%d body=%s", rec.Code, rec.Body.String())
-	if rec.Code == http.StatusOK {
-		t.Fatalf("expected invalid purpose to fail, got 200: %s", rec.Body.String())
-	}
-	assertErrorCode(t, rec, 10020)
-
-	rec = doPostAdmin(e, "/admin/api/v1/rpc-nodes", map[string]interface{}{
-		"network": "ethereum",
-		"url":     "https://eth-mainnet.example.com",
-		"type":    mdb.RpcNodeTypeHttp,
-	}, token)
-	resp := assertOK(t, rec)
-	dataObj, _ := resp["data"].(map[string]interface{})
-	nodeID := uint64(dataObj["id"].(float64))
-	nodeIDStr := fmt.Sprintf("%d", nodeID)
-
-	rec = doPatchAdmin(e, "/admin/api/v1/rpc-nodes/"+nodeIDStr, map[string]interface{}{
-		"url": "wss://eth-mainnet.example.com",
-	}, token)
-	t.Logf("UpdateRpcNode(http with wss): status=%d body=%s", rec.Code, rec.Body.String())
-	if rec.Code == http.StatusOK {
-		t.Fatalf("expected update mismatch to fail, got 200: %s", rec.Body.String())
-	}
-	assertErrorCode(t, rec, 10022)
-
-	node, err := data.GetRpcNodeByID(nodeID)
-	if err != nil {
-		t.Fatalf("reload rpc node: %v", err)
-	}
-	if node.Url != "https://eth-mainnet.example.com" {
-		t.Fatalf("node url changed after rejected update: %q", node.Url)
+	if r := doGetAdmin(e, "/admin/api/v1/rpc-nodes", token); r.Code == 200 {
+		t.Fatal("legacy node API is still registered")
 	}
 }
 
@@ -671,7 +594,7 @@ func TestAdminWallets_CRUD(t *testing.T) {
 	// Add a new wallet.
 	rec = doPostAdmin(e, "/admin/api/v1/wallets", map[string]interface{}{
 		"network": "ethereum",
-		"address": "0xTestEthAddress001",
+		"address": "0x1111111111111111111111111111111111111111",
 	}, token)
 	t.Logf("AddWallet: %s", rec.Body.String())
 	resp2 := assertOK(t, rec)
@@ -712,10 +635,14 @@ func TestAdminWallets_BatchImport(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
 	rec := doPostAdmin(e, "/admin/api/v1/wallets/batch-import", map[string]interface{}{
 		"network":   "ethereum",
-		"addresses": []string{"0xBatchAddr001", "0xBatchAddr002"},
+		"addresses": []string{"0x1111111111111111111111111111111111111111", "0xInvalid"},
 	}, token)
-	t.Logf("BatchImportWallets: %s", rec.Body.String())
-	assertOK(t, rec)
+	resp := assertOK(t, rec)
+	rows := resp["data"].([]interface{})
+	if len(rows) != 2 || rows[0].(map[string]interface{})["ok"] != true ||
+		rows[1].(map[string]interface{})["error_code"] != float64(10049) {
+		t.Fatalf("unexpected wallet import result: %v", rows)
+	}
 }
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
@@ -726,6 +653,62 @@ func TestAdminOrders_List(t *testing.T) {
 	rec := doGetAdmin(e, "/admin/api/v1/orders", token)
 	t.Logf("ListOrders: %s", rec.Body.String())
 	assertOK(t, rec)
+}
+
+// TestAdminOrders_TimestampsUseHongKongTime verifies admin order responses
+// expose full local date-times even when the database contains mixed offsets.
+func TestAdminOrders_TimestampsUseHongKongTime(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	order := &mdb.Orders{
+		TradeId:        "trade-admin-time",
+		OrderId:        "order-admin-time",
+		Amount:         2,
+		Currency:       "CNY",
+		ActualAmount:   0.29,
+		ReceiveAddress: "0x1111111111111111111111111111111111111111",
+		Token:          "USDT",
+		Network:        mdb.NetworkBsc,
+		Status:         mdb.StatusPaySuccess,
+	}
+	if err := dao.Mdb.Create(order).Error; err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	hkt := time.FixedZone("HKT", 8*60*60)
+	created := time.Date(2026, 11, 25, 14, 29, 28, 0, hkt)
+	updated := created.Add(time.Minute)
+	if err := dao.Mdb.Model(order).Updates(map[string]interface{}{
+		"created_at": created.UTC(),
+		"updated_at": updated,
+	}).Error; err != nil {
+		t.Fatalf("set order timestamps: %v", err)
+	}
+
+	rec := doGetAdmin(e, "/admin/api/v1/orders/"+order.TradeId, token)
+	var detail struct {
+		Data admin.AdminOrder
+	}
+	assertOK(t, rec)
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode order detail: %v", err)
+	}
+	if detail.Data.CreatedAt != "2026-11-25 14:29:28" || detail.Data.UpdatedAt != "2026-11-25 14:30:28" {
+		t.Fatalf("detail timestamps = %q / %q", detail.Data.CreatedAt, detail.Data.UpdatedAt)
+	}
+
+	rec = doGetAdmin(e, "/admin/api/v1/orders?keyword="+order.TradeId, token)
+	var list struct {
+		Data struct {
+			List []admin.AdminOrder
+		}
+	}
+	assertOK(t, rec)
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode order list: %v", err)
+	}
+	if len(list.Data.List) != 1 || list.Data.List[0].CreatedAt != "2026-11-25 14:29:28" || list.Data.List[0].UpdatedAt != "2026-11-25 14:30:28" {
+		t.Fatalf("list timestamps = %+v", list.Data.List)
+	}
 }
 
 // TestAdminOrders_Export verifies the export endpoint is accessible.
@@ -787,6 +770,179 @@ func TestAdminOrders_CloseWaitSelectOrder(t *testing.T) {
 	}
 	if reloaded.Status != mdb.StatusExpired {
 		t.Fatalf("status = %d, want %d", reloaded.Status, mdb.StatusExpired)
+	}
+}
+
+func TestAdminOrders_CloseHostedOrderExpiresProviderRow(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	order := &mdb.Orders{
+		TradeId:        "trade-admin-close-hosted",
+		OrderId:        "order-admin-close-hosted",
+		Amount:         10,
+		Currency:       "CNY",
+		ActualAmount:   1.47,
+		ReceiveAddress: "OKPAY",
+		Token:          "USDT",
+		Network:        mdb.NetworkTron,
+		Status:         mdb.StatusWaitPay,
+		PayProvider:    mdb.PaymentProviderOkPay,
+	}
+	if err := dao.Mdb.Create(order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := dao.Mdb.Create(&mdb.ProviderOrder{
+		TradeId:         order.TradeId,
+		Provider:        mdb.PaymentProviderOkPay,
+		ProviderOrderID: "okpay-close-hosted",
+		Status:          mdb.ProviderOrderStatusPending,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doPostAdmin(e, "/admin/api/v1/orders/"+order.TradeId+"/close", nil, token)
+	assertOK(t, rec)
+	reloaded, err := data.GetOrderInfoByTradeId(order.TradeId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != mdb.StatusExpired {
+		t.Fatalf("order status = %d, want expired", reloaded.Status)
+	}
+	provider, err := data.GetProviderOrderByTradeIDAndProvider(order.TradeId, mdb.PaymentProviderOkPay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.Status != mdb.ProviderOrderStatusExpired {
+		t.Fatalf("provider status = %q, want expired", provider.Status)
+	}
+}
+
+func TestAdminOrders_CloseManualReviewParentAndChildOrder(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	parent := &mdb.Orders{
+		TradeId:               "trade-admin-close-review-parent",
+		OrderId:               "order-admin-close-review-parent",
+		Amount:                10,
+		Currency:              "CNY",
+		ActualAmount:          1.23,
+		ReceiveAddress:        "TParentReviewAddr",
+		Token:                 "USDT",
+		Network:               mdb.NetworkTron,
+		Status:                mdb.StatusManualReview,
+		ReviewTransactionHash: "0xreviewhash",
+		PayProvider:           mdb.PaymentProviderOnChain,
+	}
+	if err := dao.Mdb.Create(parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	sub := &mdb.Orders{
+		TradeId:               "trade-admin-close-review-sub",
+		OrderId:               "order-admin-close-review-sub",
+		ParentTradeId:         parent.TradeId,
+		Amount:                10,
+		Currency:              "CNY",
+		ActualAmount:          0.1,
+		ReceiveAddress:        "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+		Token:                 "ETH",
+		Network:               mdb.NetworkBase,
+		Status:                mdb.StatusManualReview,
+		ReviewTransactionHash: "0xreviewhash",
+		PayProvider:           mdb.PaymentProviderOnChain,
+	}
+	if err := dao.Mdb.Create(sub).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := data.LockTransaction(parent.Network, parent.ReceiveAddress, parent.Token, parent.TradeId, parent.ActualAmount, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.LockTransaction(sub.Network, sub.ReceiveAddress, sub.Token, sub.TradeId, sub.ActualAmount, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doPostAdmin(e, "/admin/api/v1/orders/"+parent.TradeId+"/close", nil, token)
+	assertOK(t, rec)
+
+	for _, id := range []string{parent.TradeId, sub.TradeId} {
+		reloaded, err := data.GetOrderInfoByTradeId(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.Status != mdb.StatusExpired || reloaded.ReviewTransactionHash != "" {
+			t.Fatalf("order %s after close: status=%d review_hash=%q", id, reloaded.Status, reloaded.ReviewTransactionHash)
+		}
+	}
+	var lockCount int64
+	if err := dao.RuntimeDB.Model(&mdb.TransactionLock{}).Where("trade_id IN ?", []string{parent.TradeId, sub.TradeId}).Count(&lockCount).Error; err != nil || lockCount != 0 {
+		t.Fatalf("locks remaining=%d err=%v", lockCount, err)
+	}
+}
+
+func TestAdminOrders_MarkPaidParentOrderRoutesToManualReviewSubOrder(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	parent := &mdb.Orders{
+		TradeId:               "trade-admin-mark-paid-review-parent",
+		OrderId:               "order-admin-mark-paid-review-parent",
+		Amount:                10,
+		Currency:              "CNY",
+		ActualAmount:          1.47,
+		ReceiveAddress:        "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+		Token:                 "USDC",
+		Network:               mdb.NetworkBase,
+		Status:                mdb.StatusManualReview,
+		ReviewTransactionHash: "0xchildreviewtx",
+		NotifyUrl:             "https://merchant.example/notify",
+		PayProvider:           mdb.PaymentProviderOnChain,
+	}
+	if err := dao.Mdb.Create(parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	sub := &mdb.Orders{
+		TradeId:               "trade-admin-mark-paid-review-sub",
+		OrderId:               "order-admin-mark-paid-review-sub",
+		ParentTradeId:         parent.TradeId,
+		Amount:                10,
+		Currency:              "CNY",
+		ActualAmount:          0.1,
+		ReceiveAddress:        "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+		Token:                 "ETH",
+		Network:               mdb.NetworkBase,
+		Status:                mdb.StatusManualReview,
+		ReviewTransactionHash: "0xchildreviewtx",
+		PayProvider:           mdb.PaymentProviderOnChain,
+	}
+	if err := dao.Mdb.Create(sub).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	restore := service.SetManualOrderPaymentValidatorForTest(func(got *mdb.Orders, blockID string) (string, error) {
+		if got.TradeId != sub.TradeId {
+			return "", errors.New("does not match parent asset")
+		}
+		if blockID != "0xchildreviewtx" {
+			t.Fatalf("validator block id = %s, want 0xchildreviewtx", blockID)
+		}
+		return "0xchildreviewtx", nil
+	})
+	defer restore()
+
+	rec := doPostAdmin(e, "/admin/api/v1/orders/"+parent.TradeId+"/mark-paid", map[string]interface{}{
+		"block_transaction_id": "0xchildreviewtx",
+	}, token)
+	assertOK(t, rec)
+
+	paidParent, err := data.GetOrderInfoByTradeId(parent.TradeId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paidSub, err := data.GetOrderInfoByTradeId(sub.TradeId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paidParent.Status != mdb.StatusPaySuccess || paidParent.PayBySubId != paidSub.ID || paidParent.ReviewTransactionHash != "" {
+		t.Fatalf("parent after mark-paid: %+v", paidParent)
+	}
+	if paidSub.Status != mdb.StatusPaySuccess || paidSub.BlockTransactionId != "0xchildreviewtx" || paidSub.ReviewTransactionHash != "" {
+		t.Fatalf("sub after mark-paid: %+v", paidSub)
 	}
 }
 
@@ -1328,7 +1484,8 @@ func TestAdminDashboardRpcStatsSSE(t *testing.T) {
 func TestAdminDashboard_RangeStatsIncludeHistoricalOrders(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
 	yesterday := time.Now().AddDate(0, 0, -1)
-	createdAt := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 10, 0, 0, 0, time.Local)
+	createdAtLocal := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 10, 0, 0, 0, time.Local)
+	createdAt := createdAtLocal.UTC()
 	updatedAt := createdAt.Add(5 * time.Minute)
 
 	order := &mdb.Orders{
@@ -1384,7 +1541,7 @@ func TestAdminDashboard_RangeStatsIncludeHistoricalOrders(t *testing.T) {
 	} {
 		resp := assertOK(t, doGetAdmin(e, path, token))
 		rows, _ := resp["data"].([]interface{})
-		day := createdAt.Format("2006-01-02")
+		day := createdAtLocal.Format("2006-01-02")
 		found := false
 		for _, row := range rows {
 			item, _ := row.(map[string]interface{})
@@ -1409,7 +1566,7 @@ func TestAdminDashboard_RangeStatsIncludeHistoricalOrders(t *testing.T) {
 
 	addressResp := assertOK(t, doGetAdmin(e, "/admin/api/v1/dashboard/asset-trend?range=7d&group_by=address", token))
 	addressRows, _ := addressResp["data"].([]interface{})
-	day := createdAt.Format("2006-01-02")
+	day := createdAtLocal.Format("2006-01-02")
 	foundAddress := false
 	for _, row := range addressRows {
 		item, _ := row.(map[string]interface{})
@@ -1429,7 +1586,8 @@ func TestAdminDashboard_RangeStatsIncludeHistoricalOrders(t *testing.T) {
 func TestAdminDashboard_TodayTrendUsesHourlyBuckets(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
 	now := time.Now()
-	createdAt := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.Local)
+	createdAtLocal := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.Local)
+	createdAt := createdAtLocal.UTC()
 	updatedAt := createdAt.Add(2 * time.Minute)
 
 	order := &mdb.Orders{
@@ -1459,7 +1617,7 @@ func TestAdminDashboard_TodayTrendUsesHourlyBuckets(t *testing.T) {
 	} {
 		resp := assertOK(t, doGetAdmin(e, path, token))
 		rows, _ := resp["data"].([]interface{})
-		hour := createdAt.Format("2006-01-02 15:00")
+		hour := createdAtLocal.Format("2006-01-02 15:00")
 		found := false
 		for _, row := range rows {
 			item, _ := row.(map[string]interface{})
@@ -2136,6 +2294,75 @@ func TestAdminConfig_ExposesOkPayCredentials(t *testing.T) {
 	}
 }
 
+func TestAdminSettings_WithdrawalReminder(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	const key = mdb.SettingKeyBrandWithdrawalReminder
+	checkConfig := func(want bool) {
+		t.Helper()
+		res := assertOK(t, doGet(e, "/payments/gmpay/v1/config"))
+		site := res["data"].(map[string]interface{})["site"].(map[string]interface{})
+		if got := site["withdrawal_reminder_enabled"]; got != want {
+			t.Fatalf("withdrawal_reminder_enabled = %v, want %v", got, want)
+		}
+	}
+	save := func(group string, value interface{}, wantOK bool) {
+		t.Helper()
+		rec := doPutAdmin(e, "/admin/api/v1/settings", map[string]interface{}{
+			"items": []map[string]interface{}{{"group": group, "key": key, "type": "bool", "value": value}},
+		}, token)
+		rows := assertOK(t, rec)["data"].([]interface{})
+		if len(rows) != 1 || rows[0].(map[string]interface{})["ok"] != wantOK {
+			t.Fatalf("save %s/%v returned %v", group, value, rows)
+		}
+	}
+
+	checkConfig(false)
+	save("brand", false, true)
+	if err := data.ReloadSettings(); err != nil {
+		t.Fatal(err)
+	}
+	checkConfig(false)
+	save("brand", "invalid", false)
+	save("system", true, false)
+	checkConfig(false)
+	save("brand", true, true)
+	checkConfig(true)
+	assertOK(t, doDeleteAdmin(e, "/admin/api/v1/settings/"+key, token))
+	checkConfig(false)
+}
+
+func TestAdminSettings_PaymentReminderCopy(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	for _, field := range []string{"payment_reminder_title", "payment_reminder_body"} {
+		for _, tc := range []struct {
+			group string
+			input interface{}
+			ok    bool
+			want  string
+		}{
+			{"brand", "  转账说明\n请核对 {amount}  ", true, "转账说明\n请核对 {amount}"},
+			{"system", "wrong group", false, "转账说明\n请核对 {amount}"},
+			{"brand", false, false, "转账说明\n请核对 {amount}"},
+			{"brand", "  ", true, ""},
+		} {
+			item := map[string]interface{}{"group": tc.group, "key": "brand." + field, "type": "string", "value": tc.input}
+			rec := doPutAdmin(e, "/admin/api/v1/settings", map[string]interface{}{"items": []interface{}{item}}, token)
+			row := assertOK(t, rec)["data"].([]interface{})[0].(map[string]interface{})
+			if row["ok"] != tc.ok {
+				t.Fatalf("%s save %v: %v", field, tc.input, row)
+			}
+			if err := data.ReloadSettings(); err != nil {
+				t.Fatal(err)
+			}
+			pub := assertOK(t, doGet(e, "/payments/gmpay/v1/config"))
+			site := pub["data"].(map[string]interface{})["site"].(map[string]interface{})
+			if site[field] != tc.want {
+				t.Fatalf("%s = %v, want %q", field, site[field], tc.want)
+			}
+		}
+	}
+}
+
 func TestAdminSettings_UpsertBrandReflectsInConfig(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
 
@@ -2374,4 +2601,63 @@ func TestAdminOrders_ListWithSubExcludesSubOrdersFromTopLevel(t *testing.T) {
 	if !subOrderIds[subTradeId] {
 		t.Fatalf("sub-order trade_id=%s not found in any sub_orders array", subTradeId)
 	}
+}
+
+func TestAdminOrders_SettledFamily(t *testing.T) {
+	e, token := setupAdminTestEnv(t)
+	const base = "/admin/api/v1/orders"
+	parent := mdb.Orders{TradeId: "root", OrderId: "merchant", Network: "tron", Status: mdb.StatusPaySuccess, NotifyUrl: "https://merchant.example/callback", CallBackConfirm: mdb.CallBackConfirmOk}
+	child := mdb.Orders{TradeId: "attempt", OrderId: "merchant-sub", ParentTradeId: parent.TradeId, Network: "bsc", Token: "USDC", ActualAmount: 12.5, Status: mdb.StatusPaySuccess, BlockTransactionId: "tx-bsc", NotifyUrl: parent.NotifyUrl, CallBackConfirm: mdb.CallBackConfirmOk}
+	for _, o := range []*mdb.Orders{&parent, &child} {
+		if err := dao.Mdb.Create(o).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := dao.Mdb.Model(&parent).UpdateColumn("pay_by_sub_id", child.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{base, base + "/list-with-sub"} {
+		rec := doGetAdmin(e, path+"?network=base&network=bsc&status=1&status=2&keyword=tx-bsc&page_size=1", token)
+		var response struct {
+			Data struct {
+				Total int
+				List  []admin.AdminOrder
+			}
+		}
+		assertOK(t, rec)
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Data.Total != 1 || len(response.Data.List) != 1 || response.Data.List[0].TradeId != parent.TradeId || response.Data.List[0].Network != "bsc" {
+			t.Errorf("filtered %s: %s", path, rec.Body)
+		}
+	}
+	for _, id := range []string{parent.TradeId, child.TradeId} {
+		rec := doGetAdmin(e, base+"/"+id+"/with-sub", token)
+		var response struct {
+			Data struct {
+				admin.AdminOrder
+				Attempts []admin.AdminOrder `json:"sub_orders"`
+			}
+		}
+		assertOK(t, rec)
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		d := response.Data
+		if d.TradeId != parent.TradeId || d.BlockTransactionId != child.BlockTransactionId || d.PayBySubId != child.ID || len(d.Attempts) != 1 || d.Attempts[0].TradeId != child.TradeId {
+			t.Errorf("detail for %s: %s", id, rec.Body)
+		}
+	}
+	rec := doGetAdmin(e, base+"/export?network=bsc", token)
+	records, err := csv.NewReader(rec.Body).ReadAll()
+	if err != nil || rec.Code != http.StatusOK || len(records) != 2 || records[1][0] != parent.TradeId || records[1][6] != "bsc" || records[1][9] != "tx-bsc" {
+		t.Errorf("CSV %v: %v", records, err)
+	}
+	rec = doPostAdmin(e, base+"/"+child.TradeId+"/resend-callback", nil, token)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("resend on child: %d %s", rec.Code, rec.Body)
+	}
+	assertOK(t, doPostAdmin(e, base+"/"+parent.TradeId+"/resend-callback", nil, token))
 }

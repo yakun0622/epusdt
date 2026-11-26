@@ -29,7 +29,7 @@ func TestListOrdersForExportDoesNotStopAtUIPageLimit(t *testing.T) {
 		t.Fatalf("seed orders: %v", err)
 	}
 
-	filter := OrderListFilter{Page: 1, PageSize: 10000, Network: mdb.NetworkTron, Token: "USDT"}
+	filter := OrderListFilter{Page: 1, PageSize: 10000, Networks: []string{mdb.NetworkTron}, Token: "USDT"}
 	page, total, err := ListOrders(filter)
 	if err != nil {
 		t.Fatalf("list orders: %v", err)
@@ -48,7 +48,7 @@ func TestListOrdersForExportDoesNotStopAtUIPageLimit(t *testing.T) {
 	if exported[0].TradeId != "export-trade-204" {
 		t.Fatalf("export order = %s; expected newest first", exported[0].TradeId)
 	}
-	excluded, err := ListOrdersForExport(OrderListFilter{Status: mdb.StatusPaySuccess})
+	excluded, err := ListOrdersForExport(OrderListFilter{Statuses: []int{mdb.StatusPaySuccess}})
 	if err != nil {
 		t.Fatalf("filter exported orders: %v", err)
 	}

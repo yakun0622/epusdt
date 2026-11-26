@@ -29,7 +29,7 @@ func TestBuildSupportedAssetsIncludesConfiguredAptosTokens(t *testing.T) {
 		}
 	}
 
-	supports, err := buildSupportedAssets()
+	supports, err := buildSupportedAssets(nil)
 	if err != nil {
 		t.Fatalf("buildSupportedAssets: %v", err)
 	}
@@ -46,6 +46,31 @@ func TestBuildSupportedAssetsIncludesConfiguredAptosTokens(t *testing.T) {
 	for i := range want {
 		if supports[0].Tokens[i] != want[i] {
 			t.Fatalf("tokens = %#v, want %#v", supports[0].Tokens, want)
+		}
+	}
+}
+
+func TestHostedXLayerExcludedFromChainPaymentOptions(t *testing.T) {
+	defer testutil.SetupTestDatabases(t)()
+	if err := dao.Mdb.Create(&mdb.Chain{Network: mdb.NetworkXLayer, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := dao.Mdb.Create(&mdb.ChainToken{Network: mdb.NetworkXLayer, Symbol: "USDC", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkXLayer, "0xddd0000000000000000000000000000000000009"); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.SetSetting(mdb.SettingGroupXLayer, mdb.SettingKeyXLayerEnabled, "true", mdb.SettingTypeBool); err != nil {
+		t.Fatal(err)
+	}
+	supports, err := buildSupportedAssets(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, asset := range supports {
+		if asset.Network == mdb.NetworkXLayer {
+			t.Fatalf("OKX listed under chain payments: %+v", asset)
 		}
 	}
 }

@@ -2,14 +2,17 @@ package route
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/GMWalletApp/epusdt/config"
 	"github.com/GMWalletApp/epusdt/controller/admin"
 	"github.com/GMWalletApp/epusdt/controller/comm"
 	"github.com/GMWalletApp/epusdt/middleware"
@@ -17,6 +20,7 @@ import (
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/GMWalletApp/epusdt/model/service"
 	"github.com/GMWalletApp/epusdt/util/constant"
+	luluHttp "github.com/GMWalletApp/epusdt/util/http"
 	"github.com/GMWalletApp/epusdt/util/sign"
 	"github.com/labstack/echo/v4"
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -28,13 +32,13 @@ import (
 // request token/network/default resolution.
 func resolveEPayTypeSelector(rawType string) (string, string, bool, error) {
 	rawType = strings.TrimSpace(rawType)
-	if rawType == "" || strings.Count(rawType, ".") != 1 {
+	separator := strings.LastIndex(rawType, ".")
+	if rawType == "" || separator <= 0 || separator == len(rawType)-1 {
 		return "", "", false, nil
 	}
 
-	parts := strings.SplitN(rawType, ".", 2)
-	token := strings.TrimSpace(parts[0])
-	network := strings.ToLower(strings.TrimSpace(parts[1]))
+	token := strings.TrimSpace(rawType[:separator])
+	network := strings.ToLower(strings.TrimSpace(rawType[separator+1:]))
 	if token == "" || network == "" {
 		return "", "", false, nil
 	}
@@ -54,6 +58,11 @@ func resolveEPayTypeSelector(rawType string) (string, string, bool, error) {
 
 // RegisterRoute 路由注册
 func RegisterRoute(e *echo.Echo) {
+	RegisterRouteWithScanner(e, config.ExternalScanner())
+}
+
+func RegisterRouteWithScanner(e *echo.Echo, connection config.ScannerConnection) {
+	e.Pre(luluHttp.PublicCashierBoundary(config.CashierScriptOrigin(), false))
 	e.POST("/", func(c echo.Context) error {
 		return c.String(http.StatusOK, "hello epusdt, https://github.com/GMwalletApp/epusdt")
 	})
@@ -97,6 +106,7 @@ func RegisterRoute(e *echo.Echo) {
 	// removed — the default seeded api_key is always available, and
 	// having two sources of truth led to inbound/outbound sig mismatch.
 	epayV1 := paymentRoute.Group("/epay/v1")
+	epayV1.Match([]string{http.MethodGet, http.MethodPost}, "/order/create-transaction/api.php", epayOrderQuery)
 	epayV1.Match([]string{http.MethodPost, http.MethodGet}, "/order/create-transaction/submit.php", func(ctx echo.Context) error {
 		params := make(map[string]interface{})
 		copyParams := func(values map[string][]string) {
@@ -167,6 +177,20 @@ func RegisterRoute(e *echo.Echo) {
 		notifyURL := getString(params, "notify_url")
 		outTradeNo := getString(params, "out_trade_no")
 		returnURL := getString(params, "return_url")
+		// Bind the original signed fields, before mutable site defaults are applied.
+		// JSON sorts map keys, so GET and POST produce the same fingerprint.
+		signedFields, err := json.Marshal(params)
+		if err != nil {
+			return comm.Ctrl.FailJson(ctx, constant.ParamsMarshalErr)
+		}
+		submitHash := fmt.Sprintf("%x", sha256.Sum256(signedFields))
+		existing, err := service.ReopenEPayCashier(outTradeNo, apiKeyRow.ID, submitHash)
+		if err != nil {
+			return comm.Ctrl.FailJson(ctx, err)
+		}
+		if existing != "" {
+			return ctx.Redirect(http.StatusFound, "/pay/checkout-counter/"+existing)
+		}
 		selectorToken, selectorNetwork, selectorMatched, err := resolveEPayTypeSelector(epayType)
 		if err != nil {
 			return comm.Ctrl.FailJson(ctx, constant.SystemErr)
@@ -196,7 +220,7 @@ func RegisterRoute(e *echo.Echo) {
 		}
 
 		amountFloat, err := strconv.ParseFloat(money, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(amountFloat) || math.IsInf(amountFloat, 0) {
 			return comm.Ctrl.FailJson(ctx, constant.PayAmountErr)
 		}
 
@@ -215,6 +239,7 @@ func RegisterRoute(e *echo.Echo) {
 
 		ctx.Set("request_body", body)
 		ctx.Set(comm.EPayTypeContextKey, epayType)
+		ctx.Set(comm.EPayRequestHashContextKey, submitHash)
 		ctx.Set(middleware.ApiKeyIDKey, apiKeyRow.ID)
 		ctx.Set(middleware.ApiKeyRowKey, apiKeyRow)
 
@@ -231,12 +256,12 @@ func RegisterRoute(e *echo.Echo) {
 		return comm.Ctrl.CreateTransactionAndRedirect(ctx)
 	})
 
-	registerAdminRoutes(e)
+	registerAdminRoutes(e, connection)
 }
 
 // registerAdminRoutes wires the management console API surface under
 // /admin/api/v1. Everything except /auth/login requires a valid JWT.
-func registerAdminRoutes(e *echo.Echo) {
+func registerAdminRoutes(e *echo.Echo, connection config.ScannerConnection) {
 	// CORS for the management console. The admin SPA is commonly served
 	// from a different origin (local dev, CDN, etc.), so allow any origin
 	// but require explicit echoing — browsers refuse wildcard + credentials.
@@ -269,6 +294,12 @@ func registerAdminRoutes(e *echo.Echo) {
 
 	// Authenticated
 	authed := adminV1.Group("", middleware.CheckAdminJWT())
+	registerScannerAdmin(authed, connection)
+	authed.GET("/system/version/current", admin.Ctrl.GetCurrentSystemVersion)
+	authed.GET("/system/version/check", admin.Ctrl.CheckSystemUpdate)
+	authed.GET("/system/update/capability", admin.Ctrl.GetUpdateCapability)
+	authed.GET("/system/update/status", admin.Ctrl.GetUpdateStatus)
+	authed.POST("/system/update/start", admin.Ctrl.StartSystemUpdate)
 	authed.POST("/auth/logout", admin.Ctrl.Logout)
 	authed.GET("/auth/me", admin.Ctrl.Me)
 	authed.POST("/auth/password", admin.Ctrl.ChangePassword)
@@ -303,13 +334,6 @@ func registerAdminRoutes(e *echo.Echo) {
 	authed.POST("/chain-tokens/:id/status", admin.Ctrl.ChangeChainTokenStatus)
 	authed.DELETE("/chain-tokens/:id", admin.Ctrl.DeleteChainToken)
 
-	// RPC nodes
-	authed.GET("/rpc-nodes", admin.Ctrl.ListRpcNodes)
-	authed.POST("/rpc-nodes", admin.Ctrl.CreateRpcNode)
-	authed.PATCH("/rpc-nodes/:id", admin.Ctrl.UpdateRpcNode)
-	authed.DELETE("/rpc-nodes/:id", admin.Ctrl.DeleteRpcNode)
-	authed.POST("/rpc-nodes/:id/health-check", admin.Ctrl.HealthCheckRpcNode)
-
 	// Wallet (address) management
 	authed.GET("/wallets", admin.Ctrl.AdminListWallets)
 	authed.POST("/wallets", admin.Ctrl.AdminAddWallet)
@@ -339,6 +363,7 @@ func registerAdminRoutes(e *echo.Echo) {
 	authed.GET("/dashboard/recent-orders", admin.Ctrl.RecentOrders)
 
 	// Settings
+	authed.GET("/diagnostics/export", admin.Ctrl.ExportDiagnostics)
 	authed.GET("/settings", admin.Ctrl.ListSettings)
 	authed.GET("/settings/rate/status", admin.Ctrl.RateStatus)
 	authed.POST("/settings/rate/refresh", admin.Ctrl.RefreshRates)

@@ -1,11 +1,14 @@
 package testutil
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
 
+	scanner "github.com/GMWalletApp/ChainScanner"
 	"github.com/GMWalletApp/epusdt/config"
+	"github.com/GMWalletApp/epusdt/internal/scanneradmin"
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	appLog "github.com/GMWalletApp/epusdt/util/log"
@@ -16,6 +19,14 @@ import (
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
+)
+
+// Syntactically valid receiving addresses shared by payment fixtures.
+const (
+	TronAddress       = "TA4Wt1DUCqz6YegbnsmqsWC5uUfbdBqPxm"
+	SecondTronAddress = "TA9pkx4DFxrEw8JZzUtyDrh2uAat1LDuJL"
+	ThirdTronAddress  = "TAF8dttxK5iPKbvYC626aDBytrWANpLRXp"
+	SolanaAddress     = "So11111111111111111111111111111111111111112"
 )
 
 func SetupTestDatabases(t testing.TB) func() {
@@ -41,19 +52,39 @@ func SetupTestDatabases(t testing.TB) func() {
 		&mdb.Orders{},
 		&mdb.PaymentTxClaim{},
 		&mdb.CallbackDelivery{},
+		&mdb.PaymentConfirmation{},
 		&mdb.ProviderOrder{},
 		&mdb.WalletAddress{},
 		&mdb.ApiKey{},
+		&mdb.CallbackSigningKey{},
 		&mdb.Setting{},
 		&mdb.RateCache{},
 		&mdb.NotificationChannel{},
 		&mdb.Chain{},
 		&mdb.ChainToken{},
 		&mdb.RpcNode{},
+		&mdb.ScannerNodeMigration{},
 		&mdb.AdminUser{},
 	)
 	mustMigrate(t, runtimeDB, &mdb.TransactionLock{}, &mdb.EvmScanCursor{})
 
+	// Existing payment fixtures describe providers as legacy rows. Adapt them to
+	// the scanner response without opening external connections in unit tests.
+	previousCandidates := scanneradmin.CandidateInventory
+	scanneradmin.CandidateInventory = func(ctx context.Context, _ config.ScannerConnection, network, use string) (scanner.RouteInventory, error) {
+		var rows []mdb.RpcNode
+		q := mainDB.WithContext(ctx).Where("network=? AND enabled=? AND status IN ?", network, true, []string{"ok", "unknown", ""})
+		if use == "general" {
+			q = q.Where("purpose<>?", "manual_verify")
+		}
+		err := q.Find(&rows).Error
+		var result scanner.RouteInventory
+		for _, row := range rows {
+			n := scanner.Node{ID: int64(row.ID), NodeEndpoint: scanner.NodeEndpoint{Network: network, URL: row.Url, Protocol: row.Type}, Weight: row.Weight, Purpose: row.Purpose, Enabled: row.Enabled, Status: row.Status}
+			result.Nodes = append(result.Nodes, scanner.NodeRoute{Node: n, APIKey: row.ApiKey})
+		}
+		return result, err
+	}
 	dao.Mdb = mainDB
 	dao.RuntimeDB = runtimeDB
 	config.SettingsGetString = func(key string) string {
@@ -146,6 +177,7 @@ func SetupTestDatabases(t testing.TB) func() {
 	}
 
 	return func() {
+		scanneradmin.CandidateInventory = previousCandidates
 		closeDB(t, runtimeDB)
 		closeDB(t, mainDB)
 		dao.Mdb = nil

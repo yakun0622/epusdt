@@ -26,6 +26,7 @@ func UpsertProviderOrderCreatingWithTransaction(tx *gorm.DB, row *mdb.ProviderOr
 		Columns: []clause.Column{{Name: "trade_id"}, {Name: "provider"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"provider_order_id",
+			"receive_address",
 			"pay_url",
 			"amount",
 			"coin",
@@ -93,4 +94,18 @@ func GetSubOrderByTokenPayProvider(parentTradeID string, token string, payProvid
 		Limit(1).
 		Find(order).Error
 	return order, err
+}
+
+// ListPendingProviderOrdersByProvider returns provider_orders rows still
+// waiting on the downstream provider, oldest first. Used by the X Layer
+// poll job (the provider offers no webhook, so pending rows must be
+// queried until they settle or terminate).
+func ListPendingProviderOrdersByProvider(provider string) ([]mdb.ProviderOrder, error) {
+	var rows []mdb.ProviderOrder
+	err := dao.Mdb.Model(&mdb.ProviderOrder{}).
+		Where("provider = ?", provider).
+		Where("status = ?", mdb.ProviderOrderStatusPending).
+		Order("updated_at ASC").
+		Find(&rows).Error
+	return rows, err
 }

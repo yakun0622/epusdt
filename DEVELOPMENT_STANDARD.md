@@ -1,5 +1,7 @@
 # Development Standard
 
+[Documentation index](wiki/README.md) · [简体中文](DEVELOPMENT_STANDARD.zh_CN.md)
+
 ## Purpose
 
 This document defines the default development goals, review criteria, and testing constraints for changes in this repository.
@@ -147,6 +149,7 @@ Before considering a change ready, confirm:
 - robustness is acceptable for the target deployment model
 - tests are behavior-based and not mirror tests
 - review notes clearly explain intentional semantic changes
+- if API handlers or swag annotations changed, `make swagger` was run in `src/` (swag v1.16.6) and the regenerated `src/docs` is committed (CI fails otherwise; the frontend pulls `src/docs/swagger.json` from GitHub)
 
 ## Current Project Direction
 
